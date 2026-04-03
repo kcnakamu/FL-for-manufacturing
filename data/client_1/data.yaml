@@ -1,0 +1,11 @@
+names:
+- circle
+- square
+- triangle
+- star
+- line
+- blob
+path: /Users/karennakamura/Documents/S26-UROP/test-FL/data/client_1
+test: images/test
+train: images/train
+val: images/val
