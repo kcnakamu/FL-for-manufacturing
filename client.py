@@ -5,6 +5,7 @@ import flwr as fl
 from ultralytics import RTDETR
 from model import load_model, get_parameters, set_parameters
 from data import get_dataset_yaml
+import torch
 
 
 class RTDETRClient(fl.client.NumPyClient):
@@ -14,6 +15,7 @@ class RTDETRClient(fl.client.NumPyClient):
         self.epochs = epochs
         self.model = load_model()
         self.round = 0
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.base_dir = (Path.cwd() / "fl_runs" / timestamp).resolve()
@@ -42,6 +44,7 @@ class RTDETRClient(fl.client.NumPyClient):
             workers=0,
             verbose=False,
             exist_ok=True,
+            device=self.device,
             project=str((Path.cwd() / "fl_runs" / self.base_dir.name / f"round_{self.round:02d}").resolve()),
             name=f"client_{self.cid}",
         )
@@ -49,6 +52,7 @@ class RTDETRClient(fl.client.NumPyClient):
         # Reload from saved checkpoint
         last_ckpt = Path.cwd() / "fl_runs" / self.base_dir.name / f"round_{self.round:02d}" / f"client_{self.cid}" / "weights" / "last.pt"
         self.model = RTDETR(str(last_ckpt))
+        self.model.to(self.device)
 
         print(f"[Client {self.cid}] Round {self.round} train done → {run_dir}")
         return get_parameters(self.model), self._count_images("train"), {}
@@ -60,6 +64,7 @@ class RTDETRClient(fl.client.NumPyClient):
             data=get_dataset_yaml(self.data_dir),
             split="val",
             verbose=False,
+            device=self.device,
             project=str((Path.cwd() / "fl_runs" / self.base_dir.name / f"round_{self.round:02d}").resolve()),
             name=f"client_{self.cid}_val"
         )

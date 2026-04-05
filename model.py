@@ -11,4 +11,4 @@ def get_parameters(model):
 
 def set_parameters(model, parameters):
     for param, value in zip(model.model.parameters(), parameters):
-        param.data = torch.from_numpy(value.copy())
+        param.data = torch.from_numpy(value.copy().to(param.device))
