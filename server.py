@@ -20,7 +20,7 @@ def main():
     fl.server.start_server(
         server_address="localhost:8080",
         strategy=strategy,
-        config=fl.server.ServerConfig(num_rounds=2),
+        config=fl.server.ServerConfig(num_rounds=30),
     )
 
 if __name__ == "__main__":

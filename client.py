@@ -40,8 +40,9 @@ class RTDETRClient(fl.client.NumPyClient):
         self.model.train(
             data=get_dataset_yaml(self.data_dir),
             epochs=self.epochs,
-            imgsz=128,
-            workers=0,
+            imgsz=640,
+            batch=16,
+            workers=4,
             verbose=False,
             exist_ok=True,
             device=self.device,
@@ -88,7 +89,7 @@ def main():
     data_dir = f"data/client_{cid}"
     fl.client.start_numpy_client(
         server_address="localhost:8080",
-        client=RTDETRClient(cid, data_dir),
+        client=RTDETRClient(cid, data_dir, epochs=3),
     )
 
 if __name__ == "__main__":
