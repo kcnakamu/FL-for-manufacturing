@@ -89,7 +89,7 @@ def main():
     data_dir = f"data/client_{cid}"
     fl.client.start_numpy_client(
         server_address="localhost:8080",
-        client=RTDETRClient(cid, data_dir, epochs=3),
+        client=RTDETRClient(cid, data_dir, epochs=1),
     )
 
 if __name__ == "__main__":
