@@ -1,4 +1,6 @@
 import flwr as fl
+import argparse
+from model import load_model, get_parameters
 
 
 def weighted_average(metrics):
@@ -10,18 +12,27 @@ def weighted_average(metrics):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rounds", type=int, default=10)
+    args = parser.parse_args()
+
+    model = load_model()
+    initial_params = fl.common.ndarrays_to_parameters(get_parameters(model))
+
     strategy = fl.server.strategy.FedAvg(
         fraction_fit=1.0,
         min_fit_clients=3,
         min_available_clients=3,
+        initial_parameters=initial_params,
         evaluate_metrics_aggregation_fn=weighted_average,
     )
 
     fl.server.start_server(
-        server_address="localhost:8080",
+        server_address="0.0.0.0:8080",
         strategy=strategy,
-        config=fl.server.ServerConfig(num_rounds=2),
+        config=fl.server.ServerConfig(num_rounds=args.rounds),
     )
+
 
 if __name__ == "__main__":
     main()

@@ -1,10 +1,10 @@
 import torch
-from ultralytics import RTDETR
+from ultralytics import YOLO
 
-MODEL_PATH = "rtdetr-l.pt"
+MODEL_PATH = "yolov8n.pt"
 
 def load_model():
-    return RTDETR(MODEL_PATH)
+    return YOLO(MODEL_PATH)
 
 def get_parameters(model):
     return [p.data.cpu().numpy().copy() for p in model.model.parameters()]
