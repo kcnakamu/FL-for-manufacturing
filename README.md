@@ -30,6 +30,10 @@ pip install -r requirements.txt
 
 ## Dataset Layout
 
+Before training, unzip your desired dataset so the top-level folder is named exactly `data`.
+
+Then verify and edit each client `data.yaml` file (`data/client_0/data.yaml`, `data/client_1/data.yaml`, `data/client_2/data.yaml`) so class names and paths are correct for your unzipped files.
+
 Each client expects data in:
 
 ```text
