@@ -20,18 +20,18 @@ source /orcd/home/002/kcnakamu/s26_urop/FL-for-manufacturing/.venv/bin/activate
 # Pre-download model
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
-# Kill any leftover processes
-pkill -f "python server.py" 2>/dev/null
-pkill -f "python client.py" 2>/dev/null
-sleep 2
-
 SERVER_HOST=$(hostname)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 mkdir -p logs/$TIMESTAMP
 
-python server.py --rounds ROUNDS > logs/server.log 2>&1 &
-sleep 15
+python server.py --rounds $ROUNDS > logs/$TIMESTAMP/server.log 2>&1 &
+
+echo "Waiting for server to start..."
+until grep -q "gRPC server running" logs/$TIMESTAMP/server.log 2>/dev/null; do
+    sleep 1
+done
+echo "Server is ready!"
 
 python client.py 0 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS > logs/$TIMESTAMP/client_0.log 2>&1 &
 python client.py 1 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS > logs/$TIMESTAMP/client_1.log 2>&1 &

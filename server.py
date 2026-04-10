@@ -16,9 +16,11 @@ def main():
     parser.add_argument("--rounds", type=int, default=10)
     args = parser.parse_args()
 
-    model = load_model()
+    print("Loading model")
+    model = load_model(num_classes=6)
     initial_params = fl.common.ndarrays_to_parameters(get_parameters(model))
 
+    print("Setting strategy")
     strategy = fl.server.strategy.FedAvg(
         fraction_fit=1.0,
         min_fit_clients=3,
@@ -26,7 +28,7 @@ def main():
         initial_parameters=initial_params,
         evaluate_metrics_aggregation_fn=weighted_average,
     )
-
+    print("Starting server")
     fl.server.start_server(
         server_address="0.0.0.0:8080",
         strategy=strategy,

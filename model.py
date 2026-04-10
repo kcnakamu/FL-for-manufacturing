@@ -3,8 +3,11 @@ from ultralytics import YOLO
 
 MODEL_PATH = "yolov8n.pt"
 
-def load_model():
-    return YOLO(MODEL_PATH)
+def load_model(num_classes=6):
+    model = YOLO(MODEL_PATH)
+    # force the model to use the correct number of classes
+    model.model.yaml['nc'] = num_classes
+    return model
 
 def get_parameters(model):
     return [p.data.cpu().numpy().copy() for p in model.model.parameters()]

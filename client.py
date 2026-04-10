@@ -34,6 +34,8 @@ class YOLOClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         try:
             self.round += 1
+            
+            self.model = load_model()
             set_parameters(self.model, parameters)
 
             run_dir = self._run_dir()
@@ -49,12 +51,10 @@ class YOLOClient(fl.client.NumPyClient):
                 device=self.device,
                 project=str(self.base_dir / f"round_{self.round:02d}"),
                 name=f"client_{self.cid}",
+                amp=True,
             )
 
             params = get_parameters(self.model)
-            # last_ckpt = Path.cwd() / "fl_runs" / self.base_dir.name / f"round_{self.round:02d}" / f"client_{self.cid}" / "weights" / "last.pt"
-            # self.model = YOLO(str(last_ckpt))
-            # self.model.to(self.device)
 
             print(f"[Client {self.cid}] Round {self.round} train done → {run_dir}")
             # return get_parameters(self.model), self._count_images("train"), {}
@@ -68,7 +68,9 @@ class YOLOClient(fl.client.NumPyClient):
             raise
 
     def evaluate(self, parameters, config):
-        set_parameters(self.model, parameters)
+        if self.model is None:
+            self.model = load_model()
+            set_parameters(self.model, parameters)
 
         metrics = self.model.val(
             data=get_dataset_yaml(self.data_dir),
