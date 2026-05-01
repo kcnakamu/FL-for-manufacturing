@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
 
     print("Loading model")
-    model = load_model(num_classes=6)
+    model = load_model(num_classes=1)
     initial_params = fl.common.ndarrays_to_parameters(get_parameters(model))
 
     print("Setting strategy")
@@ -28,6 +28,14 @@ def main():
         initial_parameters=initial_params,
         evaluate_metrics_aggregation_fn=weighted_average,
     )
+    # strategy = fl.server.strategy.FedProx(
+    #     fraction_fit=1.0,
+    #     min_fit_clients=3,
+    #     min_available_clients=3,
+    #     initial_parameters=initial_params,
+    #     evaluate_metrics_aggregation_fn=weighted_average,
+    #     proximal_mu=1.0,  
+    # )
     print("Starting server")
     fl.server.start_server(
         server_address="0.0.0.0:8080",

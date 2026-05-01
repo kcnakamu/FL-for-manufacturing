@@ -3,7 +3,7 @@ from ultralytics import YOLO
 
 MODEL_PATH = "yolov8n.pt"
 
-def load_model(num_classes=6):
+def load_model(num_classes=1):
     model = YOLO(MODEL_PATH)
     # force the model to use the correct number of classes
     model.model.yaml['nc'] = num_classes
