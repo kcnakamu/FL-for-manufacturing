@@ -14,10 +14,11 @@ def weighted_average(metrics):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--num_classes", type=int, default=1)
     args = parser.parse_args()
 
     print("Loading model")
-    model = load_model(num_classes=6)
+    model = load_model(num_classes=args.num_classes)
     initial_params = fl.common.ndarrays_to_parameters(get_parameters(model))
 
     print("Setting strategy")
