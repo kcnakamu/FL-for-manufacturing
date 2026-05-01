@@ -13,12 +13,13 @@
 ROUNDS=${1:-10}
 EPOCHS=${2:-1}
 
+
 module load miniforge
 source /orcd/home/002/kcnakamu/s26_urop/FL-for-manufacturing/.venv/bin/activate
 
 
 # Pre-download model
-python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+python -c "from ultralytics import YOLO; YOLO('yolov8m.pt')"
 
 SERVER_HOST=$(hostname)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -33,9 +34,9 @@ until grep -q "gRPC server running" logs/$TIMESTAMP/server.log 2>/dev/null; do
 done
 echo "Server is ready!"
 
-python client.py 0 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS > logs/$TIMESTAMP/client_0.log 2>&1 &
-python client.py 1 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS > logs/$TIMESTAMP/client_1.log 2>&1 &
-python client.py 2 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS > logs/$TIMESTAMP/client_2.log 2>&1 &
+python client.py 0 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS --num_classes 1 > logs/$TIMESTAMP/client_0.log 2>&1 &
+python client.py 1 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS --num_classes 1 > logs/$TIMESTAMP/client_1.log 2>&1 &
+python client.py 2 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS --num_classes 1 > logs/$TIMESTAMP/client_2.log 2>&1 &
 
 wait
 echo "FL job complete"
