@@ -11,11 +11,12 @@ import argparse
 
 
 class YOLOClient(fl.client.NumPyClient):
-    def __init__(self, cid: str, data_dir: str, timestamp: str, epochs: int = 1):
+    def __init__(self, cid: str, data_dir: str, timestamp: str, epochs: int = 1, num_classes: int = 2):
         self.cid = cid
         self.data_dir = data_dir
         self.epochs = epochs
-        self.model = load_model()
+        self.num_classes = num_classes 
+        self.model = load_model(num_classes=num_classes) 
         self.round = 0
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -35,7 +36,13 @@ class YOLOClient(fl.client.NumPyClient):
         try:
             self.round += 1
             
-            self.model = load_model()
+            new_model = load_model(num_classes=self.num_classes)
+            
+            # Restore local BN stats if available
+            if hasattr(self, 'local_bn_stats'):
+                new_model.model.load_state_dict(self.local_bn_stats, strict=False)
+            
+            self.model = new_model
             set_parameters(self.model, parameters)
 
             run_dir = self._run_dir()
@@ -43,7 +50,7 @@ class YOLOClient(fl.client.NumPyClient):
             self.model.train(
                 data=get_dataset_yaml(self.data_dir),
                 epochs=self.epochs,
-                imgsz=640,
+                imgsz=480,
                 batch=16,
                 workers=0,
                 verbose=False,
@@ -55,12 +62,11 @@ class YOLOClient(fl.client.NumPyClient):
             )
 
             params = get_parameters(self.model)
+            self.local_bn_stats = {k: v for k, v in self.model.model.state_dict().items() if "bn" in k.lower()}
 
             print(f"[Client {self.cid}] Round {self.round} train done → {run_dir}")
-            # return get_parameters(self.model), self._count_images("train"), {}
             return params, self._count_images("train"), {}
 
-        
         except Exception as e:
             print(f"[Client {self.cid}] fit() crashed: {e}")
             import traceback
@@ -102,6 +108,7 @@ def main():
     parser.add_argument("server_host", type=str, default="localhost")
     parser.add_argument("timestamp", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--num_classes", type=int, default=1)
     args = parser.parse_args()
 
     timestamp = args.timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -111,7 +118,7 @@ def main():
     data_dir = f"data/client_{args.cid}"
     
     # pre-initialize client fully before connecting
-    client = YOLOClient(args.cid, data_dir, timestamp=timestamp, epochs=args.epochs)
+    client = YOLOClient(args.cid, data_dir, timestamp=timestamp, epochs=args.epochs, num_classes=args.num_classes)
     print(f"[Client {args.cid}] ready, connecting to server...", flush=True)
     
     fl.client.start_numpy_client(
