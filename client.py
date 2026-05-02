@@ -6,6 +6,7 @@ from data import get_dataset_yaml
 import torch
 import time
 import argparse
+import copy
 
 
 class YOLOClient(fl.client.NumPyClient):
@@ -66,9 +67,13 @@ class YOLOClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         if self.model is None:
             self.model = load_model(num_classes=self.num_classes)
-            set_parameters(self.model, parameters)
+        set_parameters(self.model, parameters)
 
-        metrics = self.model.val(
+        # Create model for validation (b/c of fusing)
+        val_model = load_model(num_classes=self.num_classes)
+        val_model.model.load_state_dict(self.model.model.state_dict())
+
+        metrics = val_model.val(
             data=get_dataset_yaml(self.data_dir),
             split="val",
             verbose=False,
@@ -77,6 +82,10 @@ class YOLOClient(fl.client.NumPyClient):
             project=str((Path.cwd() / "fl_runs" / self.base_dir.name / f"round_{self.round:02d}").resolve()),
             name=f"client_{self.cid}_val"
         )
+
+        del val_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         map50   = float(metrics.box.map50)
         map5095 = float(metrics.box.map)
