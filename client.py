@@ -55,8 +55,34 @@ class YOLOClient(fl.client.NumPyClient):
 
             params = get_parameters(self.model)
 
-            print(f"[Client {self.cid}] Round {self.round} train done → {run_dir}")
-            return params, self._count_images("train"), {}
+            val_model = load_model(num_classes=self.num_classes)
+            val_model.model.load_state_dict(self.model.model.state_dict())
+            val_metrics = val_model.val(
+                data=get_dataset_yaml(self.data_dir),
+                split="val",
+                verbose=False,
+                workers=0,
+                device=self.device,
+                project=str(self.base_dir / f"round_{self.round:02d}"),
+                name=f"client_{self.cid}_fit_val",
+                exist_ok=True,
+            )
+            precision = float(val_metrics.box.mp)
+            recall    = float(val_metrics.box.mr)
+            map50     = float(val_metrics.box.map50)
+            del val_model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print(
+                f"[Client {self.cid}] Round {self.round} train done → {run_dir} "
+                f"| P={precision:.4f} R={recall:.4f} mAP50={map50:.4f}"
+            )
+            return params, self._count_images("train"), {
+                "precision": precision,
+                "recall": recall,
+                "mAP50": map50,
+            }
 
         except Exception as e:
             print(f"[Client {self.cid}] fit() crashed: {e}")
