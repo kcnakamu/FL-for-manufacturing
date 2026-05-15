@@ -12,6 +12,8 @@
 
 ROUNDS=${1:-10}
 EPOCHS=${2:-1}
+STRATEGY=${3:-adaptive}
+MU=${4:-0.01}
 
 
 module load miniforge
@@ -24,19 +26,21 @@ python -c "from ultralytics import YOLO; YOLO('yolov8m.pt')"
 SERVER_HOST=$(hostname)
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-mkdir -p logs/$TIMESTAMP
+RUN_NAME="${TIMESTAMP}_${STRATEGY}"
 
-python server.py --rounds $ROUNDS > logs/$TIMESTAMP/server.log 2>&1 &
+mkdir -p logs/$RUN_NAME
+
+python server.py --rounds $ROUNDS --strategy $STRATEGY --mu $MU > logs/$RUN_NAME/server.log 2>&1 &
 
 echo "Waiting for server to start..."
-until grep -q "gRPC server running" logs/$TIMESTAMP/server.log 2>/dev/null; do
+until grep -q "gRPC server running" logs/$RUN_NAME/server.log 2>/dev/null; do
     sleep 1
 done
 echo "Server is ready!"
 
-python client.py 0 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS --num_classes 1 > logs/$TIMESTAMP/client_0.log 2>&1 &
-python client.py 1 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS --num_classes 1 > logs/$TIMESTAMP/client_1.log 2>&1 &
-python client.py 2 $SERVER_HOST $TIMESTAMP --epochs $EPOCHS --num_classes 1 > logs/$TIMESTAMP/client_2.log 2>&1 &
+python client.py 0 $SERVER_HOST $RUN_NAME --epochs $EPOCHS --num_classes 1 > logs/$RUN_NAME/client_0.log 2>&1 &
+python client.py 1 $SERVER_HOST $RUN_NAME --epochs $EPOCHS --num_classes 1 > logs/$RUN_NAME/client_1.log 2>&1 &
+python client.py 2 $SERVER_HOST $RUN_NAME --epochs $EPOCHS --num_classes 1 > logs/$RUN_NAME/client_2.log 2>&1 &
 
 wait
 echo "FL job complete"
