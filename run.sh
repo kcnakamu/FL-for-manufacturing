@@ -7,19 +7,14 @@
 
 ROUNDS=${1:-10}
 EPOCHS=${2:-1}
-STRATEGY=${3:-adaptive}
-MU=${4:-0.01}
+STRATEGY=${3:-fedavg}
 DATA_DIR=${5:-data}
-# Optional flags passed straight to prepare_dataset.py, e.g. "--negatives --augment"
-PREPARE_FLAGS=${6:-}
 
+MU=0.01
 
 module load miniforge
 source /orcd/home/002/kcnakamu/s26_urop/FL-for-manufacturing/.venv/bin/activate
 
-# Prepare dataset and generate data.yaml files (skips if DATA_DIR already exists)
-echo "Preparing dataset in $DATA_DIR..."
-python utils/prepare_dataset.py --output_dir $DATA_DIR $PREPARE_FLAGS
 
 # Pre-download model
 python -c "from ultralytics import YOLO; YOLO('yolov8m.pt')"
