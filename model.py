@@ -3,10 +3,9 @@ from ultralytics import YOLO
 from collections import OrderedDict
 
 MODEL_PATH = "yolov8n.pt"
-BACKBONE_MAX_LAYER_IDX = 9
-
 
 def load_model(num_classes=1):
+    """Load model and set number of classes to num_classes (default model has 80 classes)"""
     model = YOLO(MODEL_PATH)
     if model.model.nc != num_classes:
         model.model.nc = num_classes
@@ -15,7 +14,7 @@ def load_model(num_classes=1):
     return model
 
 def _get_trainable_keys(model):
-    """Returns keys for all parameters that require gradients (normal FL)."""
+    """Normal FL: Returns keys for all parameters that require gradient."""
     return [k for k, v in model.model.state_dict().items()]
 
 def get_parameters(model):

@@ -7,14 +7,12 @@ from model import get_parameters, load_model
 
 STRATEGIES = ["adaptive", "fedawa", "fedavg", "fedprox"]
 
-
 def weighted_average(metrics):
     total = sum(n for n, _ in metrics)
     return {
         "mAP50":    sum(n * m["mAP50"]    for n, m in metrics) / total,
         "mAP50-95": sum(n * m["mAP50-95"] for n, m in metrics) / total,
     } if total > 0 else {}
-
 
 def _perf_score(metrics: dict) -> float:
     """score = 0.5 * F1 + 0.5 * mAP50, where F1 = 2PR / (P+R)."""
@@ -160,7 +158,7 @@ def main():
     parser.add_argument(
         "--strategy",
         choices=STRATEGIES,
-        default="adaptive",
+        default="fedavg",
         help="Aggregation strategy: adaptive, fedawa, fedavg, or fedprox",
     )
     parser.add_argument(
