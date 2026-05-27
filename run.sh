@@ -8,7 +8,7 @@
 ROUNDS=${1:-10}
 EPOCHS=${2:-1}
 STRATEGY=${3:-fedavg}
-DATA_DIR=${5:-data}
+DATA_DIR=${4:-data}
 
 MU=0.01
 
@@ -41,15 +41,3 @@ python client.py 2 $SERVER_HOST $RUN_NAME --epochs $EPOCHS --num_classes 1 --str
 wait
 echo "FL job complete"
 
-# Evaluate the final global model (client_0's copy) on the test set
-FINAL_MODEL="fl_runs/$RUN_NAME/final_model/client_0_final.pt"
-if [ -f "$FINAL_MODEL" ]; then
-    echo "Running test-set evaluation..."
-    python utils/evaluate_test.py \
-        --model "$FINAL_MODEL" \
-        --data_dir "$DATA_DIR" \
-        --output_dir "fl_runs/$RUN_NAME/test_results" \
-        --save_csv "logs/$RUN_NAME/test_results.csv"
-else
-    echo "WARNING: final model not found at $FINAL_MODEL — skipping test evaluation"
-fi

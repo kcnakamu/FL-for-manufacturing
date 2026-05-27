@@ -4,6 +4,8 @@ import flwr as fl
 from model import MODEL_PATH, load_model, get_parameters, set_parameters
 from data import get_dataset_yaml
 import torch
+import numpy as np
+import json
 import time
 import argparse
 import copy
@@ -131,10 +133,41 @@ class YOLOClient(fl.client.NumPyClient):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        map50   = float(metrics.box.map50)
-        map5095 = float(metrics.box.map)
+        map50     = float(metrics.box.map50)
+        map5095   = float(metrics.box.map)
+        map75     = float(metrics.box.map75)
+        precision = float(metrics.box.mp)
+        recall    = float(metrics.box.mr)
+        f1_arr    = metrics.box.f1
+        f1        = float(np.mean(f1_arr)) if len(f1_arr) else 0.0
+        infer_ms  = float(metrics.speed["inference"])
 
-        print(f"[Client {self.cid}] Round {self.round} eval — mAP50: {map50:.4f} | mAP50-95: {map5095:.4f}")
+        results_dict = {
+            "round":                    self.round,
+            "mAP50":                    map50,
+            "mAP50-95":                 map5095,
+            "mAP75":                    map75,
+            "precision":                precision,
+            "recall":                   recall,
+            "f1":                       f1,
+            "inference_ms_per_image":   infer_ms,
+        }
+        metrics_path = (
+            self.base_dir
+            / f"round_{self.round:02d}"
+            / f"client_{self.cid}_val"
+            / "metrics.json"
+        )
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metrics_path, "w") as fh:
+            json.dump(results_dict, fh, indent=2)
+
+        print(
+            f"[Client {self.cid}] Round {self.round} eval — "
+            f"mAP50: {map50:.4f} | mAP50-95: {map5095:.4f} | mAP75: {map75:.4f} | "
+            f"P: {precision:.4f} | R: {recall:.4f} | F1: {f1:.4f} | "
+            f"infer: {infer_ms:.1f}ms/img"
+        )
         return map5095, self._count_images("val"), {
             "mAP50": map50,
             "mAP50-95": map5095,
@@ -169,7 +202,7 @@ def main():
 
     time.sleep(int(args.cid) * 3)
     print(f"[Client {args.cid}] starting...", flush=True)
-    data_dir = f"{args.data_dir}/client_{args.cid}"
+    data_dir = str(Path(f"{args.data_dir}/client_{args.cid}").resolve())
     
     # pre-initialize client fully before connecting
     client = YOLOClient(args.cid, data_dir, timestamp=timestamp, epochs=args.epochs, num_classes=args.num_classes, strategy=args.strategy)
