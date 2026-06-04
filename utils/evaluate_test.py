@@ -24,9 +24,11 @@ import yaml
 def build_test_yaml(test_dir: Path, class_names: list[str]) -> str:
     """Write a temporary data.yaml pointing at the test set and return its path."""
     data = {
-        "path": str(test_dir.resolve()),
-        "test": "images",
-        "nc":   len(class_names),
+        "path":  str(test_dir.resolve()),
+        "train": "images", 
+        "val":   "images",  
+        "test":  "images",
+        "nc":    len(class_names),
         "names": class_names,
     }
     tmp = tempfile.NamedTemporaryFile(
