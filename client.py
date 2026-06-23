@@ -1,5 +1,4 @@
 from pathlib import Path
-from datetime import datetime
 import flwr as fl
 from model import MODEL_PATH, load_model, get_parameters, set_parameters
 from data import get_dataset_yaml
@@ -12,13 +11,13 @@ import copy
 
 
 class YOLOClient(fl.client.NumPyClient):
-    def __init__(self, cid: str, data_dir: str, timestamp: str, epochs: int = 5, num_classes: int = 1, strategy: str = "fedavg"):
+    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 1, strategy: str = "fedavg"):
         """Initializes a YOLO Model for client {cid}.
 
         Args:
             cid (str): client id
             data_dir (str): data directory
-            timestamp (str): time the experiment started; used for output folder naming
+            out_dir (str): base output directory for FL round artifacts (e.g. experiments/<exp_name>/fl)
             epochs (int, optional): Number of epochs run locally. Defaults to 1.
             num_classes (int, optional): Number of detection classes. Defaults to 1.
             strategy (str, optional): Aggregation strategy used at Server level.
@@ -32,7 +31,7 @@ class YOLOClient(fl.client.NumPyClient):
         self.round = 0
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.base_dir = (Path.cwd() / "fl_runs" / timestamp).resolve()
+        self.base_dir = Path(out_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         print(f"[Client {self.cid}] Output dir: {self.base_dir}")
 
@@ -73,7 +72,7 @@ class YOLOClient(fl.client.NumPyClient):
             # Get precision, recall, and map50 for adaptive weighting aggregation
             precision, recall, map50 = 0.0, 0.0, 0.0
             if self.strategy == "adaptive":
-                val_model = load_model(num_classes=self.num_classes)
+                val_model = load_model(num_classes=self.model.model.nc)
                 val_model.model.load_state_dict(self.model.model.state_dict())
                 val_metrics = val_model.val(
                     data=get_dataset_yaml(self.data_dir),
@@ -116,7 +115,7 @@ class YOLOClient(fl.client.NumPyClient):
         set_parameters(self.model, parameters)
 
         # Create model for validation (b/c of layer fusing problem)
-        val_model = load_model(num_classes=self.num_classes)
+        val_model = load_model(num_classes=self.model.model.nc)
         val_model.model.load_state_dict(self.model.model.state_dict())
 
         metrics = val_model.val(
@@ -125,7 +124,7 @@ class YOLOClient(fl.client.NumPyClient):
             verbose=False,
             workers=0, 
             device=self.device,
-            project=str((Path.cwd() / "fl_runs" / self.base_dir.name / f"round_{self.round:02d}").resolve()),
+            project=str(self.base_dir / f"round_{self.round:02d}"),
             name=f"client_{self.cid}_val"
         )
 
@@ -182,7 +181,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("cid", type=str)
     parser.add_argument("server_host", type=str, default="localhost")
-    parser.add_argument("timestamp", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--num_classes", type=int, default=1)
     parser.add_argument(
@@ -196,16 +194,20 @@ def main():
         default="data",
         help="Base data directory; each client uses <data_dir>/client_<cid>",
     )
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        default="fl_runs",
+        help="Base output directory for FL round artifacts (e.g. experiments/<exp_name>/fl)",
+    )
     args = parser.parse_args()
-
-    timestamp = args.timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     time.sleep(int(args.cid) * 3)
     print(f"[Client {args.cid}] starting...", flush=True)
     data_dir = str(Path(f"{args.data_dir}/client_{args.cid}").resolve())
     
     # pre-initialize client fully before connecting
-    client = YOLOClient(args.cid, data_dir, timestamp=timestamp, epochs=args.epochs, num_classes=args.num_classes, strategy=args.strategy)
+    client = YOLOClient(args.cid, data_dir, out_dir=args.out_dir, epochs=args.epochs, num_classes=args.num_classes, strategy=args.strategy)
     print(f"[Client {args.cid}] ready, connecting to server...", flush=True)
     
     fl.client.start_numpy_client(
