@@ -1,10 +1,19 @@
 """
-Update the `path` field in each client's data.yaml to match the current
-absolute location on disk.
+Update the `path` field in each data.yaml to match the current absolute
+location on disk.
+
+Works for both dataset layouts:
+  - Centralized: a single data.yaml at the dataset root (e.g. data/neu_centralized)
+  - Federated:   one data.yaml per client/split subfolder (e.g. data/neu_data with
+                 client_*/data.yaml and test/data.yaml)
+
+Every data.yaml found under the given directory has its `path` set to the
+absolute path of the directory that contains it.
 
 Usage:
-    python utils/update_yaml_paths.py data_folder/data
-    python utils/update_yaml_paths.py data_folder/data_aug --dry-run
+    python utils/data/update_yaml_paths.py data/neu_centralized
+    python utils/data/update_yaml_paths.py data/neu_data
+    python utils/data/update_yaml_paths.py data/neu_data --dry-run
 """
 
 import argparse
@@ -14,24 +23,25 @@ import yaml
 
 
 def update_paths(dataset_dir: Path, dry_run: bool = False) -> int:
-    yaml_files = sorted(dataset_dir.glob("client_*/data.yaml"))
+    yaml_files = sorted(dataset_dir.rglob("data.yaml"))
     if not yaml_files:
-        print(f"No client_*/data.yaml files found under '{dataset_dir}'")
+        print(f"No data.yaml files found under '{dataset_dir}'")
         return 0
 
     updated = 0
     for yaml_path in yaml_files:
         correct_path = str(yaml_path.parent.resolve())
+        rel = yaml_path.relative_to(dataset_dir)
 
         with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
         current_path = data.get("path", "")
         if current_path == correct_path:
-            print(f"  [ok]      {yaml_path.parent.name}/data.yaml")
+            print(f"  [ok]      {rel}")
             continue
 
-        print(f"  [update]  {yaml_path.parent.name}/data.yaml")
+        print(f"  [update]  {rel}")
         print(f"            {current_path!r}")
         print(f"         -> {correct_path!r}")
 
@@ -56,7 +66,11 @@ def main():
         description="Fix data.yaml paths after moving the dataset to a new location.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("dataset_dir", help="Dataset root containing client_* subdirectories")
+    p.add_argument(
+        "dataset_dir",
+        help="Dataset root to search recursively for data.yaml files "
+        "(centralized dataset folder or federated root with client_*/ subdirs)",
+    )
     p.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
     args = p.parse_args()
 

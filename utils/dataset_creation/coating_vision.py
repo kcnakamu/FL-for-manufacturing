@@ -206,7 +206,7 @@ def write_yolo_split(
 
 def write_dataset_yaml(client_dir: Path, client_id: int):
     """
-    Write dataset.yaml to client_dir with relative train/val paths,
+    Write data.yaml to client_dir with relative train/val paths,
     nc, and class names matching your YOLO class indices.
     """
     yaml_content = {

@@ -22,8 +22,8 @@ python "centralized training/analyze_results.py" \
     --round10      path/to/round10.pt \
     --stage1       path/to/stage1_best.pt \
     --stage2       path/to/stage2_best.pt \
-    --client2_data dataset/client2/dataset.yaml \
-    --central_data dataset/central_test/dataset.yaml \
+    --client2_data dataset/client2/data.yaml \
+    --central_data dataset/central_test/data.yaml \
     --output       runs/analysis/results.json
 
 python "centralized_training/analyze_results.py" \
