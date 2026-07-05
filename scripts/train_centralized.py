@@ -9,21 +9,24 @@ full      : entire model trains
 
 Usage
 -----
-# From scratch
-python "centralized_training/train_centralized.py" \
-    --data dataset/data.yaml --mode full --epochs 150 --lr 0.01
+# Centralized baseline (from scratch, all data pooled)
+python scripts/train_centralized.py \
+    --data data/neu_data/all_clients/data.yaml --mode full --epochs 150 --lr 0.01 \
+    --output_dir experiments/disruption_neu_fedavg/baselines/centralized
 
-# From checkpoint
-python "centralized_training/train_centralized.py" \
-    --data dataset/data.yaml --weights runs/exp/weights/best.pt \
-    --mode neck_head --epochs 30 --lr 0.001
+# Stage 1 — head-only adaptation from the Round-10 global model
+python scripts/train_centralized.py \
+    --data data/neu_data/client_2/data.yaml \
+    --weights experiments/disruption_neu_fedavg/fl/final_model/client_0_final.pt \
+    --mode head_only --epochs 25 --lr 0.001 \
+    --output_dir experiments/disruption_neu_fedavg/adaptation
 
-# my use
-python "centralized_training/train_centralized.py"  --data datasets/neu_data/client_2/data.yaml  --weights fl_runs/20260606_170422_fedavg_disruption/final_model/client_0_final.pt --mode head_only --epochs 25 --lr 0.001 --output_dir centralized_training/runs
-
-python "centralized_training/train_centralized.py"  --data datasets/neu_data/client_2/data.yaml  --weights /home/kcnakamu/s26_urop/FL-for-manufacturing/centralized_training/runs/head_only/weights/best.pt --mode neck_head --epochs 75 --lr 0.0001 --output_dir centralized_training/runs
-
-python "centralized_training/train_centralized.py" --data neu_data/client_0/data.yaml --mode full --epochs 150 --lr 0.01
+# Stage 2 — neck+head fine-tuning from the Stage-1 checkpoint
+python scripts/train_centralized.py \
+    --data data/neu_data/client_2/data.yaml \
+    --weights experiments/disruption_neu_fedavg/adaptation/head_only/weights/best.pt \
+    --mode neck_head --epochs 75 --lr 0.0001 \
+    --output_dir experiments/disruption_neu_fedavg/adaptation
 """
 
 from __future__ import annotations

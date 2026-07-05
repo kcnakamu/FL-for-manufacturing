@@ -1,4 +1,10 @@
-# Generate Summary of dataset
+"""
+Print image/label counts per split for every folder under a dataset root,
+flagging any split where the image and label counts don't match.
+
+Usage:
+    python utils/analysis/dataset_summary.py --source data/neu_data
+"""
 from pathlib import Path
 import argparse
 
@@ -27,7 +33,7 @@ def get_summary(data_dir):
         for split, counts in sorted(splits.items()):
             imgs = counts.get("images", "?")
             lbls = counts.get("labels", "?")
-            match = "✓" if imgs == lbls else f"✗ MISMATCH"
+            match = "✓" if imgs == lbls else "✗ MISMATCH"
             print(f"  {split}: {imgs} images, {lbls} labels  {match}")
 
         print("")

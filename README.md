@@ -18,19 +18,18 @@ This project trains a YOLOv8 object detector with Federated Learning (Flower) ac
 ├── scripts/
 │   ├── train_centralized.py   # Staged fine-tuning (head-only, neck+head, full)
 │   ├── analyze_results.py     # Evaluate FL + adaptation checkpoints, write results.json
-│   └── analysis/              # Existing results and visualizations
-│       ├── results.json
-│       ├── figures/
+│   └── analysis/
 │       └── visualize_results.ipynb
 │
 ├── utils/
 │   ├── analysis/
 │   │   ├── tune_threshold.py  # Sweep YOLO confidence threshold, find optimal value
-│   │   ├── evaluate_test.py   # Evaluate a single checkpoint on a test split
-│   │   ├── plot_metrics.py    # Plot FL round metrics from logs
+│   │   ├── evaluate_test.py   # Evaluate checkpoint(s) on the test split
+│   │   ├── plot_metrics.py    # Plot per-round mAP50 across FL rounds
+│   │   ├── plot_fl_rounds.py  # Plot all per-round metrics (mAP50, P, R, F1, ...)
 │   │   └── dataset_summary.py # Print class/split counts for a dataset
 │   ├── data/
-│   │   ├── centeralized_dataset.py  # Merge client folders into one centralized dataset
+│   │   ├── centralized_dataset.py   # Merge client folders into one centralized dataset
 │   │   └── update_yaml_paths.py     # Fix absolute paths in data.yaml files
 │   └── dataset_creation/
 │       ├── split_neu_data.py  # Split NEU-DET into federated client folders
@@ -64,10 +63,10 @@ This project trains a YOLOv8 object detector with Federated Learning (Flower) ac
 
 | | Inclusion | Patches | Scratches | Total | Share |
 |-|-----------|---------|-----------|-------|-------|
-| Client 0 (Factory A) | 201 | 143 | 112 | 456 | 59.7% |
+| Client 0 (Factory A) | 202 | 143 | 112 | 457 | 59.7% |
 | Client 1 (Factory B) | 46  | 104 | 78  | 228 | 29.8% |
-| Client 2 (Factory C) | 7   | 8   | 65  | 80  | 10.4% |
-| **Total train**      | 254 | 255 | 255 | 764 | |
+| Client 2 (Factory C) | 7   | 8   | 65  | 80  | 10.5% |
+| **Total train**      | 255 | 255 | 255 | 765 | |
 
 Central test set: 45 images (15 per class, balanced). Each client val: 30 images (10 per class).
 
@@ -139,7 +138,7 @@ After training, find the optimal YOLO confidence threshold on the test set:
 
 ```bash
 python utils/analysis/tune_threshold.py \
-    --model  experiments/disruption_neu_fedavg/adaptation/neck_head/weights/best.pt \
+    --model  experiments/disruption_neu_fedavg/fl/final_model/client_0_final.pt \
     --data   data/neu_data/test/data.yaml \
     --split  test \
     --metric f1 \
@@ -170,10 +169,13 @@ python scripts/analyze_results.py \
 
 Reuses `scripts/train_centralized.py` with different `--output_dir` targets.
 
-**Centralized model** — all client data pooled, standard YOLO training:
+**Centralized model** — all client data pooled, standard YOLO training. First
+merge the client folders into one dataset, then train on it:
 ```bash
+python utils/data/centralized_dataset.py   # writes data/neu_centralized/
+
 python scripts/train_centralized.py \
-    --data data/neu_data/all_clients/data.yaml \
+    --data data/neu_centralized/data.yaml \
     --mode full --epochs 150 --lr 0.01 \
     --output_dir experiments/disruption_neu_fedavg/baselines/centralized
 ```

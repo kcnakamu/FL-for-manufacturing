@@ -1,3 +1,15 @@
+"""
+Split the NEU Surface Defect Database into federated client folders.
+
+Reads NEU-DET (VOC-format annotations), keeps only Inclusion/Patches/Scratches,
+and writes a shared held-out test set plus per-client train/val splits in
+Ultralytics YOLO format (images/{train,val} + labels/{train,val} + data.yaml).
+Client sizes are set by SPLIT_CONFIG to create a deliberate data/class skew.
+
+Usage:
+    python utils/dataset_creation/split_neu_data.py --src NEU-DET --out data/neu_data
+"""
+
 import argparse
 import random
 import shutil
@@ -10,13 +22,6 @@ TARGET_CLASSES = {
     "inclusion": 0,
     "patches":   1,
     "scratches": 2,
-}
-
-# Maps the on-disk subdirectory name to the canonical class key above.
-DIR_TO_CLASS = {
-    "inclusion": "inclusion",
-    "patches":   "patches",
-    "scratches": "scratches",
 }
 
 CLASS_NAMES = ["Inclusion", "Patches", "Scratches"]
@@ -85,8 +90,8 @@ def collect_stems_by_class(src: Path) -> dict[str, list[tuple[Path, Path]]]:
         for cls_dir in sorted(img_dir.iterdir()):
             if not cls_dir.is_dir():
                 continue
-            cls = DIR_TO_CLASS.get(cls_dir.name)
-            if cls is None:
+            cls = cls_dir.name.lower()
+            if cls not in TARGET_CLASSES:
                 continue  # skip crazing, pitted_surface, rolled-in_scale
             for img_path in sorted(cls_dir.glob("*.jpg")):
                 result[cls].append((img_path, ann_dir / f"{img_path.stem}.xml"))

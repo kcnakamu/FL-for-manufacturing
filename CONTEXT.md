@@ -44,9 +44,9 @@ Classes not used: Crazing (hard to see with naked eye), Pitted Surface, Rolled-i
 
 | Split | Inclusion | Patches | Scratches | Total |
 |-------|-----------|---------|-----------|-------|
-| Client 0 train | 201 | 143 | 112 | 456 (59.7%) |
+| Client 0 train | 202 | 143 | 112 | 457 (59.7%) |
 | Client 1 train | 46  | 104 | 78  | 228 (29.8%) |
-| Client 2 train | 7   | 8   | 65  | 80  (10.4%) |
+| Client 2 train | 7   | 8   | 65  | 80  (10.5%) |
 | Each client val | 10 | 10  | 10  | 30 (from val folder) |
 | Central test    | 15 | 15  | 15  | 45 (from val folder) |
 
@@ -123,7 +123,7 @@ utils/
     plot_metrics.py                # Plot per-round FL metrics from metrics.json files
     dataset_summary.py             # Print image/class counts for a dataset
   data/
-    centeralized_dataset.py        # Merge client folders into one centralized dataset folder
+    centralized_dataset.py         # Merge client folders into one centralized dataset folder
     update_yaml_paths.py           # Fix absolute paths in data.yaml after moving data
   dataset_creation/
     split_neu_data.py              # Split NEU-DET raw data into federated client folders
@@ -176,9 +176,9 @@ experiments/<exp_name>/
 
 ---
 
-## Existing Results (scripts/analysis/results.json)
+## Existing Results (historical — from a since-removed scripts/analysis/results.json)
 
-Three-stage evaluation on the current NEU dataset (Crazing/Pitted/Rolled-in Scale — **old classes**, before the switch to Inclusion/Patches/Scratches):
+Three-stage evaluation on an **old** version of the NEU dataset (Crazing/Pitted/Rolled-in Scale — the classes used before the switch to Inclusion/Patches/Scratches):
 
 | Stage | Dataset | mAP50 | Precision | Recall | F1 |
 |-------|---------|-------|-----------|--------|-----|

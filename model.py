@@ -5,28 +5,48 @@ from collections import OrderedDict
 MODEL_PATH = "yolov8n.pt"
 
 def load_model(num_classes=1):
-    """Load model and set number of classes to num_classes (default model has 80 classes)"""
+    """Load COCO-pretrained YOLOv8n and adapt the head to num_classes.
+    """
     model = YOLO(MODEL_PATH)
     if model.model.nc != num_classes:
-        model.model.nc = num_classes
         from ultralytics.nn.tasks import DetectionModel
-        model.model = DetectionModel(model.model.yaml, nc=num_classes).to(model.device)
+
+        pretrained_state = model.model.state_dict()
+        new_model = DetectionModel(model.model.yaml, nc=num_classes).to(model.device)
+        new_state = new_model.state_dict()
+
+        # Keep pretrained weights wherever the tensor exists and shapes match.
+        transfer = {
+            k: v
+            for k, v in pretrained_state.items()
+            if k in new_state and v.shape == new_state[k].shape
+        }
+        missing = len(new_state) - len(transfer)
+        new_model.load_state_dict(transfer, strict=False)
+        print(
+            f"[load_model] Adapted head to nc={num_classes}: "
+            f"transferred {len(transfer)} pretrained tensors, "
+            f"{missing} randomly initialized (head)."
+        )
+
+        new_model.nc = num_classes
+        model.model = new_model
     return model
 
-def _get_trainable_keys(model):
-    """Normal FL: Returns keys for all parameters that require gradient."""
-    return [k for k, v in model.model.state_dict().items()]
+def _state_keys(model):
+    """Ordered state_dict keys — the canonical tensor order shared across clients."""
+    return list(model.model.state_dict().keys())
 
 def get_parameters(model):
-    """Normal FL: share ALL model tensors."""
+    """Share ALL model tensors as a list of numpy arrays, in _state_keys() order."""
     state = model.model.state_dict()
-    keys = _get_trainable_keys(model)
+    keys = _state_keys(model)
     return [state[k].detach().cpu().numpy().copy() for k in keys]
 
 def set_parameters(model, parameters):
-    """Normal FL: Update the entire model with global weights."""
+    """Load global weights (list of numpy arrays in _state_keys() order) into the model."""
     current_state = model.model.state_dict()
-    keys = _get_trainable_keys(model)
+    keys = _state_keys(model)
 
     if len(parameters) != len(keys):
         raise ValueError(

@@ -1,15 +1,18 @@
 """
 Collect per-round client metrics from an FL run and plot mAP50 across rounds.
 
+Plots only mAP50. For all metrics (mAP50, mAP50-95, P, R, F1) in one figure,
+use plot_fl_rounds.py instead.
+
 Usage:
     # single run
-    python utils/plot_metrics.py --run fl_runs/20240101_123456_fedavg --save_fig figures/metrics_neg.png
+    python utils/analysis/plot_metrics.py --run experiments/disruption_neu_fedavg/fl --save_fig map50.png
 
     # save DataFrame to CSV and figure to PNG
-    python utils/plot_metrics.py --run fl_runs/20240101_fedavg --save_csv metrics.csv --save_fig metrics.png
+    python utils/analysis/plot_metrics.py --run experiments/disruption_neu_fedavg/fl --save_csv metrics.csv --save_fig map50.png
 
     # compare multiple runs on the same axes (one line per run × client)
-    python utils/plot_metrics.py --run fl_runs/run_a fl_runs/run_b
+    python utils/analysis/plot_metrics.py --run experiments/run_a/fl experiments/run_b/fl
 """
 
 import argparse
@@ -79,7 +82,7 @@ def main():
     )
     parser.add_argument(
         "--run", nargs="+", required=True,
-        help="Path(s) to FL run directory (fl_runs/<timestamp_strategy>)",
+        help="Path(s) to a run's fl/ directory (experiments/<exp_name>/fl)",
     )
     parser.add_argument("--save_csv", default=None, help="Save collected metrics to CSV")
     parser.add_argument("--save_fig", default=None, help="Save figure to file instead of showing")

@@ -21,8 +21,8 @@ module load miniforge
 source /orcd/home/002/kcnakamu/s26_urop/FL-for-manufacturing/.venv/bin/activate
 
 
-# Pre-download model
-python -c "from ultralytics import YOLO; YOLO('yolov8m.pt')"
+# Pre-download model (must match MODEL_PATH in model.py)
+python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
 SERVER_HOST=$(hostname)
 

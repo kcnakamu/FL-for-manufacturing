@@ -1,8 +1,16 @@
-import argparse
+"""
+Build a federated YOLO dataset from the CoatingVision defect data (a separate
+dataset from NEU). Filters to surface-scratch positives (optionally including
+negatives), splits into a shared test set + 3 client train/val folders, and
+optionally writes brightness-augmented training copies.
+
+Split sizes are hardcoded in SPLIT_CONFIG. Edit the paths in __main__, then run:
+    python utils/dataset_creation/coating_vision.py
+"""
+
 import csv
 import random
 import shutil
-from collections import defaultdict
 from pathlib import Path
 import pandas as pd
 from PIL import Image, ImageEnhance
@@ -204,7 +212,7 @@ def write_yolo_split(
                 _write_label_class0_only(src_lbl, lbl_out / f"{aug_stem}.txt")
 
 
-def write_dataset_yaml(client_dir: Path, client_id: int):
+def write_dataset_yaml(client_dir: Path):
     """
     Write data.yaml to client_dir with relative train/val paths,
     nc, and class names matching your YOLO class indices.
@@ -266,7 +274,7 @@ def build_dataset(
             write_yolo_split(neg_splits["train"][i], "train", client_dir, src_img_dir, src_lbl_dir, is_negative=True, n_aug_copies=n_aug)
             write_yolo_split(neg_splits["val"][i], "val", client_dir, src_img_dir, src_lbl_dir, is_negative=True)
 
-        write_dataset_yaml(client_dir, client_id=i)
+        write_dataset_yaml(client_dir)
 
 
 if __name__ == "__main__":

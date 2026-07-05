@@ -18,7 +18,7 @@ class YOLOClient(fl.client.NumPyClient):
             cid (str): client id
             data_dir (str): data directory
             out_dir (str): base output directory for FL round artifacts (e.g. experiments/<exp_name>/fl)
-            epochs (int, optional): Number of epochs run locally. Defaults to 1.
+            epochs (int, optional): Number of epochs run locally. Defaults to 5.
             num_classes (int, optional): Number of detection classes. Defaults to 1.
             strategy (str, optional): Aggregation strategy used at Server level.
         """
@@ -27,13 +27,82 @@ class YOLOClient(fl.client.NumPyClient):
         self.epochs = epochs
         self.num_classes = num_classes
         self.strategy = strategy
-        self.model = load_model(num_classes=num_classes) 
+        self.model = load_model(num_classes=num_classes)
         self.round = 0
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Diagnostic: snapshot of the global weights set at the start of fit(),
+        # used by the on_train_start hook to confirm train() actually trains
+        # from the global weights (not a reloaded yolov8n.pt checkpoint).
+        self._global_snapshot = None
+        self.model.add_callback("on_train_start", self._verify_global_loaded_hook)
 
         self.base_dir = Path(out_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         print(f"[Client {self.cid}] Output dir: {self.base_dir}")
+
+        # FedProx: the server (FedProx strategy) forwards μ per round in the fit
+        # config; the proximal term (μ/2)||w - w_global||² MUST be applied
+        # client-side — Flower's FedProx is byte-for-byte FedAvg on the server
+        # and never adds it for us. Register the hook unconditionally and gate on
+        # μ>0 at train start (see _fedprox_hook), so FedProx is driven by what the
+        # server sends, not the client's --strategy flag. This avoids a silent
+        # client/server strategy mismatch quietly degrading FedProx to FedAvg.
+        self._fedprox_mu = 0.0
+        self.model.add_callback("on_train_start", self._fedprox_hook)
+
+    def _fedprox_hook(self, trainer):
+        """Add the FedProx term (μ/2)||w - w_global||² to the local loss.
+
+        No-op unless the server sent μ>0 this round, so it is safe to register
+        for every strategy — only FedProx's configure_fit forwards proximal_mu.
+        """
+        mu = self._fedprox_mu
+        if mu <= 0:
+            return
+        net = trainer.model
+        anchor = [p.detach().clone() for p in net.parameters()]
+        base_loss = net.loss
+
+        def loss(batch, preds=None):
+            out, items = base_loss(batch, preds)
+            out = out.clone()
+            out[0] += 0.5 * mu * sum(((p - a) ** 2).sum()
+                                     for p, a in zip(net.parameters(), anchor))
+            return out, items
+
+        net.loss = loss
+        print(f"[Client {self.cid}] FedProx active (mu={mu})")
+
+    def _verify_global_loaded_hook(self, trainer):
+        """Confirm train() starts from the GLOBAL aggregated weights set in fit().
+
+        If Ultralytics silently reloaded yolov8n.pt instead of using the
+        in-memory weights, the trainer's model here would NOT match the global
+        weights we set. Decisive from round >= 2 (in round 1 the global weights
+        equal the pretrained init, so a match is expected either way).
+        """
+        try:
+            if self._global_snapshot is None:
+                return
+            cur = [t.detach().cpu().numpy() for t in trainer.model.state_dict().values()]
+            if len(cur) != len(self._global_snapshot):
+                print(f"[Client {self.cid}] on_train_start: tensor count mismatch "
+                      f"({len(cur)} vs {len(self._global_snapshot)}) — cannot verify")
+                return
+            diff = sum(
+                float(np.abs(c.astype(np.float64) - g.astype(np.float64)).sum())
+                for c, g in zip(cur, self._global_snapshot)
+                if np.issubdtype(c.dtype, np.floating)
+            )
+            status = ("OK: training from global weights"
+                      if diff < 1e-3 else
+                      "WARNING: trainer weights differ from global — train() may have "
+                      "reloaded yolov8n.pt and discarded the aggregated weights")
+            print(f"[Client {self.cid}] Round {self.round} on_train_start: "
+                  f"|trainer_model - global_set|_L1 = {diff:.6e} ({status})")
+        except Exception as e:
+            print(f"[Client {self.cid}] on_train_start verify hook failed: {e}")
 
     def _run_dir(self) -> Path:
         d = self.base_dir / f"round_{self.round:02d}" / f"client_{self.cid}"
@@ -48,6 +117,13 @@ class YOLOClient(fl.client.NumPyClient):
             self.round += 1
             # Update the model's parameters using the server parameters
             set_parameters(self.model, parameters)
+            # Snapshot the global weights so the on_train_start hook can verify
+            # train() actually trains from these (not a reloaded checkpoint).
+            self._global_snapshot = [np.copy(p) for p in parameters]
+
+            # FedProx μ for this round (server forwards it via the fit config);
+            # read each round so a server-side schedule on μ is respected.
+            self._fedprox_mu = float(config.get("proximal_mu", 0.0))
 
             run_dir = self._run_dir()
             self.model.overrides.setdefault("model", MODEL_PATH)
@@ -110,8 +186,6 @@ class YOLOClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         """ Evaluates model with the new global model after aggregation.
         """
-        if self.model is None:
-            self.model = load_model(num_classes=self.num_classes)
         set_parameters(self.model, parameters)
 
         # Create model for validation (b/c of layer fusing problem)

@@ -18,22 +18,13 @@ mAP50, Precision, Recall, F1, False Positives, FP per image
 
 Usage
 -----
-python "centralized training/analyze_results.py" \
-    --round10      path/to/round10.pt \
-    --stage1       path/to/stage1_best.pt \
-    --stage2       path/to/stage2_best.pt \
-    --client2_data dataset/client2/data.yaml \
-    --central_data dataset/central_test/data.yaml \
-    --output       runs/analysis/results.json
-
-python "centralized_training/analyze_results.py" \
-    --round10     fl_runs/20260606_170422_fedavg_disruption/final_model/client_0_final.pt \
-    --stage1      centralized_training/runs/head_only/weights/best.pt \
-    --stage2      centralized_training/runs/neck_head/weights/best.pt \
-    --client2_data  datasets/neu_data/client_2/data.yaml \
-    --central_data  datasets/neu_data/test/data.yaml \
-    --output       centralized_training/analysis/results.json
-
+python scripts/analyze_results.py \
+    --round10      experiments/disruption_neu_fedavg/fl/final_model/client_0_final.pt \
+    --stage1       experiments/disruption_neu_fedavg/adaptation/head_only/weights/best.pt \
+    --stage2       experiments/disruption_neu_fedavg/adaptation/neck_head/weights/best.pt \
+    --client2_data data/neu_data/client_2/data.yaml \
+    --central_data data/neu_data/test/data.yaml \
+    --output       experiments/disruption_neu_fedavg/analysis/results.json
 """
 
 
@@ -57,11 +48,23 @@ def _count_images(data_yaml: str, split: str) -> int:
     return len([f for f in split_path.rglob("*") if f.suffix.lower() in _IMAGE_SUFFIXES])
 
 
-def run_val(model_path: str, data: str, split: str, device: str) -> dict:
+def _load_best_threshold(sweep_json: str) -> float:
+    """Read 'best_threshold' from a tune_threshold.py sweep JSON."""
+    with open(sweep_json) as f:
+        payload = json.load(f)
+    return float(payload["best_threshold"])
+
+
+def run_val(model_path: str, data: str, split: str, device: str, conf: float | None = None) -> dict:
     model = YOLO(model_path)
     # plots=True is required for Ultralytics ≥8.x to populate the confusion matrix;
     # process_batch() is gated behind `if self.args.plots` in DetectionValidator.
-    results = model.val(data=data, split=split, device=device, verbose=False, plots=True)
+    # conf=None lets Ultralytics use its validation default (~0.001); pass the tuned
+    # threshold to report P/R/F1/FP at the intended operating point.
+    val_kwargs = dict(data=data, split=split, device=device, verbose=False, plots=True)
+    if conf is not None:
+        val_kwargs["conf"] = conf
+    results = model.val(**val_kwargs)
 
     mp = float(results.box.mp)
     mr = float(results.box.mr)
@@ -90,6 +93,7 @@ def run_val(model_path: str, data: str, split: str, device: str) -> dict:
     fp_per_image = total_fp / n_images if n_images > 0 else float("nan")
 
     return {
+        "conf_threshold": conf,
         "map50": round(map50, 4),
         "precision": round(mp, 4),
         "recall": round(mr, 4),
@@ -109,7 +113,16 @@ def analyze(
     central_data: str,
     device: str,
     output: str,
+    round10_sweep: str | None = None,
+    stage1_sweep: str | None = None,
+    stage2_sweep: str | None = None,
 ) -> None:
+    # Per-stage tuned confidence thresholds. None → Ultralytics validation default.
+    confs = {
+        "round10_global":   _load_best_threshold(round10_sweep) if round10_sweep else None,
+        "stage1_head_only": _load_best_threshold(stage1_sweep)  if stage1_sweep  else None,
+        "stage2_neck_head": _load_best_threshold(stage2_sweep)  if stage2_sweep  else None,
+    }
     stages = {
         "round10_global":    (round10, "Round 10 global FL model"),
         "stage1_head_only":  (stage1,  "Stage 1: head-only fine-tuning"),
@@ -117,15 +130,17 @@ def analyze(
     }
     datasets = {
         "client2_val":  (client2_data, "val"),
-        "central_test": (central_data, "val"),
+        "central_test": (central_data, "test"),
     }
 
     all_results: dict = {}
     for stage_key, (model_path, stage_label) in stages.items():
         all_results[stage_key] = {}
+        conf = confs[stage_key]
+        conf_note = f"conf={conf:.2f}" if conf is not None else "conf=default"
         for dataset_key, (data_yaml, split) in datasets.items():
-            print(f"\n[{stage_label}] — {dataset_key} ...")
-            metrics = run_val(model_path, data_yaml, split, device)
+            print(f"\n[{stage_label}] — {dataset_key} ({conf_note}) ...")
+            metrics = run_val(model_path, data_yaml, split, device, conf)
             all_results[stage_key][dataset_key] = metrics
             print(
                 f"  mAP50={metrics['map50']:.4f}  "
@@ -153,6 +168,9 @@ def parse_args():
     parser.add_argument("--stage2",       required=True, help="Stage 2 best checkpoint (.pt)")
     parser.add_argument("--client2_data", required=True, help="Client 2 dataset YAML")
     parser.add_argument("--central_data", required=True, help="Central test dataset YAML (must have 'test' split)")
+    parser.add_argument("--round10_sweep", help="Round 10 threshold_sweep.json; uses its best_threshold")
+    parser.add_argument("--stage1_sweep",  help="Stage 1 threshold_sweep.json; uses its best_threshold")
+    parser.add_argument("--stage2_sweep",  help="Stage 2 threshold_sweep.json; uses its best_threshold")
     parser.add_argument("--device",       default="",    help="Device (e.g. '0', 'cpu'). Empty = auto.")
     parser.add_argument("--output",       default="analysis/results.json",
                         help="Output JSON path. Pass experiments/<exp_name>/analysis/results.json.")
@@ -169,4 +187,7 @@ if __name__ == "__main__":
         central_data=args.central_data,
         device=args.device,
         output=args.output,
+        round10_sweep=args.round10_sweep,
+        stage1_sweep=args.stage1_sweep,
+        stage2_sweep=args.stage2_sweep,
     )
