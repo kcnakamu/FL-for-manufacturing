@@ -33,10 +33,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from pathlib import Path
 
+import numpy as np
+import torch
 from ultralytics import YOLO
 from ultralytics.nn.tasks import DetectionModel
+
+
+def set_seed(seed: int) -> None:
+    """Seed Python, NumPy, and PyTorch RNGs for reproducible head init."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 # YOLOv8n layer indices: backbone 0-9, neck 10-21, head 22
 # https://docs.ultralytics.com/yolov5/tutorials/transfer_learning_with_frozen_layers#freeze-all-except-final-detection-layers
@@ -83,7 +95,11 @@ def train(
     output_dir: str,
     device: str,
     workers: int,
+    seed: int,
 ) -> None:
+    # Seed before building the model so the random detection-head init
+    # (when adapting yolov8n's nc=80 head to num_classes) is reproducible.
+    set_seed(seed)
     model = _build_model(weights, num_classes)
     _apply_freeze(model, mode)
 
@@ -101,7 +117,8 @@ def train(
         device=device,
         project=str(out_path.resolve()),
         name=mode,
-        freeze=[], 
+        freeze=[],
+        seed=seed,
     )
 
     summary = {
@@ -113,6 +130,7 @@ def train(
         "imgsz": imgsz,
         "batch": batch,
         "data": data,
+        "seed": seed,
     }
     summary_path = Path(model.trainer.save_dir) / "train_config.json"
     with open(summary_path, "w") as f:
@@ -136,6 +154,9 @@ def parse_args():
                         help="Output dir for training runs. Pass experiments/<exp_name>/adaptation (or baselines/<name>).")
     parser.add_argument("--device", default="", help="Device (e.g. '0', 'cpu'). Empty = auto.")
     parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Random seed for head init + YOLO training. Vary across runs "
+                             "to test robustness; match the FL run's seed for a full-experiment repeat.")
     return parser.parse_args()
 
 
@@ -153,4 +174,5 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         device=args.device,
         workers=args.workers,
+        seed=args.seed,
     )

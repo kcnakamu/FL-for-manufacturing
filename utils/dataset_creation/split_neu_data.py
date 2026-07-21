@@ -206,19 +206,24 @@ def print_summary(splits_by_class: dict) -> None:
     print()
 
 
-def run(src: str | Path, out: str | Path) -> None:
+def run(src: str | Path, out: str | Path, seed: int | None = None) -> None:
     src = Path(src)
     out = Path(out)
 
+    config = dict(SPLIT_CONFIG)
+    if seed is not None:
+        config["seed"] = seed
+
     print(f"[INFO] Source : {src}")
     print(f"[INFO] Output : {out}")
+    print(f"[INFO] Seed   : {config['seed']}")
 
     stems_by_class = collect_stems_by_class(src)
     for cls, stems in stems_by_class.items():
         print(f"[INFO] '{cls}': {len(stems)} images found")
 
     splits_by_class = {
-        cls: split_class(stems, cls, SPLIT_CONFIG)
+        cls: split_class(stems, cls, config)
         for cls, stems in stems_by_class.items()
     }
 
@@ -252,5 +257,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--src", required=True, help="Path to NEU-DET directory")
     parser.add_argument("--out", default="neu_data", help="Output directory")
+    parser.add_argument("--seed", type=int, default=SPLIT_CONFIG["seed"],
+                        help="Shuffle seed for which images land in each client/test split. "
+                             "Vary across runs to test robustness to the specific split.")
     args = parser.parse_args()
-    run(src=args.src, out=args.out)
+    run(src=args.src, out=args.out, seed=args.seed)

@@ -42,11 +42,17 @@ def build_test_yaml(test_dir: Path, class_names: list[str]) -> str:
 
 
 def eval_model(model_path: str, test_yaml: str, output_dir: Path, device: str,
-               conf: float | None = None, per_class: bool = False) -> dict:
+               conf: float | None = None, iou: float | None = None,
+               per_class: bool = False) -> dict:
     from ultralytics import YOLO
 
     model = YOLO(model_path)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ultralytics uses iou=0.7 for NMS by default; only override when supplied.
+    val_kwargs = {}
+    if iou is not None:
+        val_kwargs["iou"] = iou
 
     metrics = model.val(
         data=test_yaml,
@@ -60,6 +66,7 @@ def eval_model(model_path: str, test_yaml: str, output_dir: Path, device: str,
         project=str(output_dir.parent),
         name=output_dir.name,
         exist_ok=True,
+        **val_kwargs,
     )
 
     p  = float(metrics.box.mp)
@@ -144,6 +151,9 @@ def main():
     parser.add_argument("--conf",        type=float, default=None,
                         help="Confidence threshold for predictions "
                              "(default: Ultralytics val default of 0.001)")
+    parser.add_argument("--iou",         type=float, default=None,
+                        help="NMS IoU threshold, e.g. 0.4 "
+                             "(default: Ultralytics val default of 0.7)")
     parser.add_argument("--per_class",   action="store_true",
                         help="Also report per-class mAP50 and mAP50-95")
     args = parser.parse_args()
@@ -168,7 +178,7 @@ def main():
         out_dir = Path(args.output_dir) / Path(model_path).parent.parent.name
         print(f"[{i+1}/{len(args.model)}] Evaluating: {name}")
         row = eval_model(model_path, test_yaml, out_dir, device,
-                         conf=args.conf, per_class=args.per_class)
+                         conf=args.conf, iou=args.iou, per_class=args.per_class)
         rows.append(row)
         print(
             f"  P={row['P']:.4f}  R={row['R']:.4f}  F1={row['F1']:.4f}"

@@ -233,12 +233,19 @@ def build_dataset(
     include_negatives: bool = False,
     scratch_only: bool = False,
     augment_train: bool = False,
+    seed: int | None = None,
 ):
     """
     Full pipeline: filter → split → write.
     Calls each function in order and writes test/, client_1/, client_2/, client_3/
     under output_dir. Run twice (with/without negatives) for comparable setups.
+
+    Pass `seed` to override the shuffle/augmentation seed (SPLIT_CONFIG["seed"]).
     """
+    if seed is not None:
+        SPLIT_CONFIG["seed"] = seed
+    print(f"[INFO] Seed: {SPLIT_CONFIG['seed']}")
+
     src_img_dir = coating_vision_dir / "detection" / "images"
     src_lbl_dir = coating_vision_dir / "detection" / "labels"
 
@@ -278,10 +285,20 @@ def build_dataset(
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Build federated CoatingVision dataset.")
+    parser.add_argument("--src", default="CoatingVision", help="Path to CoatingVision directory")
+    parser.add_argument("--out", default="dataset/coating_aug", help="Output directory")
+    parser.add_argument("--seed", type=int, default=SPLIT_CONFIG["seed"],
+                        help="Shuffle/augmentation seed. Vary across runs to test split robustness.")
+    args = parser.parse_args()
+
     build_dataset(
-        Path('CoatingVision'),
-        Path('dataset/coating_aug'),
+        Path(args.src),
+        Path(args.out),
         include_negatives=False,
         scratch_only=False,
         augment_train=True,
+        seed=args.seed,
     )

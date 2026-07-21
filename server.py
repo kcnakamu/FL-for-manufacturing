@@ -1,6 +1,6 @@
 import flwr as fl
 import argparse
-from model import get_parameters, load_model
+from model import get_parameters, load_model, set_seed
 from strategies import build_strategy, add_weight_delta_logging, STRATEGIES
 
 
@@ -29,7 +29,16 @@ def main():
                         help="Softmax temperature for FedAWA")
     parser.add_argument("--eps", type=float, default=1e-6,
                         help="Smoothing epsilon for adaptive weighting")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Random seed for the initial global model (head init) "
+                             "broadcast to all clients. Vary across runs to test "
+                             "robustness to initialization.")
     args = parser.parse_args()
+
+    # Seed before building the model so the randomly initialized detection head
+    # (broadcast to every client as the round-1 global weights) is reproducible.
+    set_seed(args.seed)
+    print(f"Seed: {args.seed}")
 
     print("Loading model")
     server_model = load_model(num_classes=args.num_classes)

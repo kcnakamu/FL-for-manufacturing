@@ -1,8 +1,24 @@
+import random
+import numpy as np
 import torch
 from ultralytics import YOLO
 from collections import OrderedDict
 
 MODEL_PATH = "yolov8n.pt"
+
+
+def set_seed(seed: int):
+    """Seed Python, NumPy, and PyTorch RNGs for reproducible model init.
+
+    Controls the random detection-head initialization in load_model /
+    DetectionModel. YOLO's own training randomness (augmentation, dataloader
+    order) is seeded separately by passing seed=<seed> to model.train().
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def load_model(num_classes=1):
     """Load COCO-pretrained YOLOv8n and adapt the head to num_classes.

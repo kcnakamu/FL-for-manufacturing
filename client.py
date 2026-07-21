@@ -1,6 +1,6 @@
 from pathlib import Path
 import flwr as fl
-from model import MODEL_PATH, load_model, get_parameters, set_parameters
+from model import MODEL_PATH, load_model, get_parameters, set_parameters, set_seed
 from data import get_dataset_yaml
 import torch
 import numpy as np
@@ -11,7 +11,7 @@ import copy
 
 
 class YOLOClient(fl.client.NumPyClient):
-    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 1, strategy: str = "fedavg"):
+    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 1, strategy: str = "fedavg", seed: int = 0):
         """Initializes a YOLO Model for client {cid}.
 
         Args:
@@ -21,12 +21,15 @@ class YOLOClient(fl.client.NumPyClient):
             epochs (int, optional): Number of epochs run locally. Defaults to 5.
             num_classes (int, optional): Number of detection classes. Defaults to 1.
             strategy (str, optional): Aggregation strategy used at Server level.
+            seed (int, optional): Random seed forwarded to YOLO training (augmentation,
+                dataloader order). Defaults to 0.
         """
         self.cid = cid
         self.data_dir = data_dir
         self.epochs = epochs
         self.num_classes = num_classes
         self.strategy = strategy
+        self.seed = seed
         self.model = load_model(num_classes=num_classes)
         self.round = 0
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -141,6 +144,7 @@ class YOLOClient(fl.client.NumPyClient):
                 project=str(self.base_dir / f"round_{self.round:02d}"),
                 name=f"client_{self.cid}",
                 amp=True,
+                seed=self.seed,
             )
 
             params = get_parameters(self.model)
@@ -274,14 +278,22 @@ def main():
         default="fl_runs",
         help="Base output directory for FL round artifacts (e.g. experiments/<exp_name>/fl)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for YOLO training (augmentation, dataloader order). "
+             "Use the same seed as the server for a reproducible run.",
+    )
     args = parser.parse_args()
 
+    set_seed(args.seed)
     time.sleep(int(args.cid) * 3)
-    print(f"[Client {args.cid}] starting...", flush=True)
+    print(f"[Client {args.cid}] starting (seed={args.seed})...", flush=True)
     data_dir = str(Path(f"{args.data_dir}/client_{args.cid}").resolve())
-    
+
     # pre-initialize client fully before connecting
-    client = YOLOClient(args.cid, data_dir, out_dir=args.out_dir, epochs=args.epochs, num_classes=args.num_classes, strategy=args.strategy)
+    client = YOLOClient(args.cid, data_dir, out_dir=args.out_dir, epochs=args.epochs, num_classes=args.num_classes, strategy=args.strategy, seed=args.seed)
     print(f"[Client {args.cid}] ready, connecting to server...", flush=True)
     
     fl.client.start_numpy_client(
