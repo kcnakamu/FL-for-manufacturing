@@ -4,8 +4,9 @@ dataset from NEU). Filters to surface-scratch positives (optionally including
 negatives), splits into a shared test set + 3 client train/val folders, and
 optionally writes brightness-augmented training copies.
 
-Split sizes are hardcoded in SPLIT_CONFIG. Edit the paths in __main__, then run:
-    python utils/dataset_creation/coating_vision.py
+Split sizes are hardcoded in SPLIT_CONFIG; source/output paths and seed are
+passed on the command line:
+    python utils/dataset_creation/coating_vision.py --src CoatingVision --out dataset/coating_aug
 """
 
 import csv
@@ -237,7 +238,7 @@ def build_dataset(
 ):
     """
     Full pipeline: filter → split → write.
-    Calls each function in order and writes test/, client_1/, client_2/, client_3/
+    Calls each function in order and writes test/, client_0/, client_1/, client_2/
     under output_dir. Run twice (with/without negatives) for comparable setups.
 
     Pass `seed` to override the shuffle/augmentation seed (SPLIT_CONFIG["seed"]).
