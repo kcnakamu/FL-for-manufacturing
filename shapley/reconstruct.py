@@ -45,7 +45,11 @@ def _weighted_average(updates: Sequence[NDArrays], counts: Sequence[int]) -> NDA
     if n_total <= 0:
         raise ValueError(f"Total example count must be positive, got {n_total}.")
     weighted = [[layer * n_i for layer in w] for w, n_i in zip(updates, counts)]
-    return [reduce(np.add, layer_updates) / n_total for layer_updates in zip(*weighted)]
+    # np.asarray keeps 0-d state entries (e.g. BatchNorm num_batches_tracked) as
+    # ndarrays: a ufunc over 0-d inputs returns a numpy scalar, which set_parameters'
+    # torch.from_numpy would reject. It is a no-op for the usual N-d layers.
+    return [np.asarray(reduce(np.add, layer_updates) / n_total)
+            for layer_updates in zip(*weighted)]
 
 
 def _fedavg_reconstruct(
