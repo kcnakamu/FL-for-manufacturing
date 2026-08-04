@@ -2,9 +2,9 @@
 Sweep YOLO confidence thresholds and report the optimal value.
 
 For each threshold the script runs model.val() and records mAP50, precision,
-recall, F1, false positives, FP per image, and per-class confusion.  The
-threshold that maximises --metric (default: f1) is highlighted in the stdout
-table and written as "best_threshold" in the output JSON.
+recall, and F1. The threshold that maximises --metric (default: f1) is
+highlighted in the stdout table and written as "best_threshold" in the output
+JSON.
 
 Usage
 -----
@@ -30,52 +30,28 @@ import json
 from pathlib import Path
 
 import numpy as np
-import yaml
 from ultralytics import YOLO
 
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 _METRIC_KEYS = ("f1", "map50", "precision", "recall")
 
 
-def _count_images(data_yaml: str, split: str) -> int:
-    with open(data_yaml) as f:
-        d = yaml.safe_load(f)
-    root = Path(d.get("path", Path(data_yaml).parent))
-    split_path = root / d[split]
-    return len([p for p in split_path.rglob("*") if p.suffix.lower() in _IMAGE_SUFFIXES])
-
-
-def _eval_at_threshold(model: YOLO, data: str, split: str, conf: float, device: str, n_images: int) -> dict:
-    results = model.val(data=data, split=split, conf=conf, device=device, verbose=False, plots=True)
+def _eval_at_threshold(model: YOLO, data: str, split: str, conf: float, device: str) -> dict:
+    # plots=False: this sweep only needs the box metrics (mAP50/P/R/F1). The
+    # confusion matrix — the only thing plots=True would additionally populate,
+    # at the cost of writing plot files every threshold — is not used here.
+    results = model.val(data=data, split=split, conf=conf, device=device, verbose=False, plots=False)
 
     mp    = float(results.box.mp)
     mr    = float(results.box.mr)
     map50 = float(results.box.map50)
     f1    = 2 * mp * mr / (mp + mr + 1e-8)
 
-    cm   = results.confusion_matrix.matrix  # (nc+1, nc+1)
-    nc   = cm.shape[0] - 1
-    names = results.names
-
-    total_fp = int(cm[:-1, -1].sum())
-    fp_per_image = total_fp / n_images if n_images > 0 else float("nan")
-
-    per_class: dict = {}
-    for i in range(nc):
-        tp = int(cm[i, i])
-        fp = int(cm[i, :].sum() - cm[i, i])
-        fn = int(cm[:, i].sum() - cm[i, i])
-        per_class[names[i]] = {"tp": tp, "fp": fp, "fn": fn}
-
     return {
-        "threshold":       round(conf, 4),
-        "map50":           round(map50, 4),
-        "precision":       round(mp, 4),
-        "recall":          round(mr, 4),
-        "f1":              round(f1, 4),
-        "false_positives": total_fp,
-        "fp_per_image":    round(fp_per_image, 4),
-        "per_class":       per_class,
+        "threshold": round(conf, 4),
+        "map50":     round(map50, 4),
+        "precision": round(mp, 4),
+        "recall":    round(mr, 4),
+        "f1":        round(f1, 4),
     }
 
 
@@ -89,18 +65,16 @@ def sweep(
     device: str,
 ) -> None:
     model = YOLO(model_path)
-    n_images = _count_images(data, split)
-    print(f"Evaluating {len(thresholds)} thresholds on {n_images} images ({split} split)…\n")
+    print(f"Evaluating {len(thresholds)} thresholds ({split} split)…\n")
 
     results_list: list[dict] = []
     for conf in thresholds:
-        row = _eval_at_threshold(model, data, split, conf, device, n_images)
+        row = _eval_at_threshold(model, data, split, conf, device)
         results_list.append(row)
         print(
             f"  conf={conf:.2f}  mAP50={row['map50']:.4f}  "
             f"P={row['precision']:.4f}  R={row['recall']:.4f}  "
-            f"F1={row['f1']:.4f}  FP={row['false_positives']}  "
-            f"FP/img={row['fp_per_image']:.3f}"
+            f"F1={row['f1']:.4f}"
         )
 
     best = max(results_list, key=lambda r: r[metric])
@@ -108,8 +82,7 @@ def sweep(
     print(f"\n{'='*60}")
     print(f"Best threshold by {metric}: {best['threshold']:.2f}  ({metric}={best[metric]:.4f})")
     print(f"  mAP50={best['map50']:.4f}  P={best['precision']:.4f}  "
-          f"R={best['recall']:.4f}  F1={best['f1']:.4f}  "
-          f"FP={best['false_positives']}  FP/img={best['fp_per_image']:.3f}")
+          f"R={best['recall']:.4f}  F1={best['f1']:.4f}")
     print(f"{'='*60}\n")
 
     output_path = Path(output)
