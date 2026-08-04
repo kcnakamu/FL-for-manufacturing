@@ -19,7 +19,11 @@ FL_DIR="${EXP_DIR}/fl"
 LOG_DIR="${FL_DIR}/logs"
 
 module load miniforge
-source /orcd/home/002/kcnakamu/s26_urop/FL-for-manufacturing/.venv/bin/activate
+# Activate the project venv. Defaults to the .venv in the directory you ran
+# `sbatch` from (normally the repo root); override with FL_VENV to point
+# elsewhere:  FL_VENV=/path/to/.venv sbatch run.sh ...
+VENV="${FL_VENV:-${SLURM_SUBMIT_DIR:-$(pwd)}/.venv}"
+source "$VENV/bin/activate"
 
 
 # Pre-download model (must match MODEL_PATH in model.py)

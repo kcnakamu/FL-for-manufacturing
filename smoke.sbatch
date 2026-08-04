@@ -29,7 +29,10 @@ FL_DIR="${EXP_DIR}/fl"
 LOG_DIR="${FL_DIR}/logs"
 
 module load miniforge
-source /orcd/home/002/kcnakamu/s26_urop/FL-for-manufacturing/.venv/bin/activate
+# Activate the project venv (see run.sh); override with FL_VENV if it lives
+# outside the submit directory.
+VENV="${FL_VENV:-${SLURM_SUBMIT_DIR:-$(pwd)}/.venv}"
+source "$VENV/bin/activate"
 
 # Pre-download model (must match MODEL_PATH in model.py)
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
