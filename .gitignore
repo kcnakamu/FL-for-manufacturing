@@ -1,3 +1,22 @@
-fl_runs/
-data/
-experiments/
+# Experiment outputs / data (not version-controlled)
+# NOTE: leading slash anchors these to the repo root so they do NOT also match
+# like-named nested dirs. Without it, `data/` also ignored the source dir
+# utils/data/, silently keeping utils/data/centralized_dataset.py out of git.
+/fl_runs/
+/data/
+/experiments/
+/outputs/
+
+# Generated analysis artifacts (default output dir of gt_box_overlap.py)
+/utils/analysis/gt_box_overlap_out/
+
+# Auto-downloaded model weights (Ultralytics fetches these on first use)
+*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# macOS
+.DS_Store
