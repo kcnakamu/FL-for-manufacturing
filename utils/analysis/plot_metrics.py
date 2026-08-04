@@ -16,41 +16,13 @@ Usage:
 """
 
 import argparse
-import json
-import re
 import sys
 from pathlib import Path
 
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
-def collect_metrics(run_dir: Path) -> pd.DataFrame:
-    """Walk <run_dir>/round_*/client_*_val/metrics.json and return a DataFrame."""
-    pattern = re.compile(r"round_(\d+)")
-    client_pattern = re.compile(r"client_(\w+)_val")
-
-    rows = []
-    for metrics_file in sorted(run_dir.glob("round_*/client_*_val/metrics.json")):
-        round_match = pattern.search(metrics_file.parts[-3])
-        client_match = client_pattern.search(metrics_file.parts[-2])
-        if not round_match or not client_match:
-            continue
-        with open(metrics_file) as f:
-            data = json.load(f)
-        rows.append({
-            "run":    run_dir.name,
-            "round":  int(round_match.group(1)),
-            "client": client_match.group(1),
-            **data,
-        })
-
-    if not rows:
-        print(f"Warning: no metrics.json files found under {run_dir}", file=sys.stderr)
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows).sort_values(["client", "round"]).reset_index(drop=True)
-    return df
+from _fl_metrics import collect_metrics
 
 
 def plot_map50(df: pd.DataFrame, title: str, save_path: str | None = None):
@@ -93,7 +65,7 @@ def main():
         run_dir = Path(run_path)
         if not run_dir.exists():
             sys.exit(f"Run directory not found: {run_dir}")
-        df = collect_metrics(run_dir)
+        df = collect_metrics(run_dir, include_run=True)
         if not df.empty:
             frames.append(df)
 

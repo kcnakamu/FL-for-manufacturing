@@ -18,42 +18,16 @@ Usage:
 """
 
 import argparse
-import json
-import re
 import sys
 from pathlib import Path
 
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from _fl_metrics import collect_metrics
+
 # Metrics to plot, in display order. Only those present in the data are drawn.
 METRICS = ["mAP50", "mAP50-95", "precision", "recall", "f1"]
-
-
-def collect_metrics(run_dir: Path) -> pd.DataFrame:
-    """Walk <run_dir>/round_*/client_*_val/metrics.json and return a DataFrame."""
-    round_pattern = re.compile(r"round_(\d+)")
-    client_pattern = re.compile(r"client_(\w+)_val")
-
-    rows = []
-    for metrics_file in sorted(run_dir.glob("round_*/client_*_val/metrics.json")):
-        round_match = round_pattern.search(metrics_file.parts[-3])
-        client_match = client_pattern.search(metrics_file.parts[-2])
-        if not round_match or not client_match:
-            continue
-        with open(metrics_file) as f:
-            data = json.load(f)
-        rows.append({
-            "round":  int(round_match.group(1)),
-            "client": client_match.group(1),
-            **data,
-        })
-
-    if not rows:
-        print(f"Warning: no metrics.json files found under {run_dir}", file=sys.stderr)
-        return pd.DataFrame()
-
-    return pd.DataFrame(rows).sort_values(["client", "round"]).reset_index(drop=True)
 
 
 def plot_trends(df: pd.DataFrame, title: str, save_path: str | None = None):
