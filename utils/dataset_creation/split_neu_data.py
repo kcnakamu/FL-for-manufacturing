@@ -112,6 +112,11 @@ def split_class(
             f"Class '{cls}': need {total_needed} images but only have {len(stems)}"
         )
 
+    # NOTE: the RNG is re-seeded here on every call, i.e. once per class. All
+    # classes therefore shuffle from the identical seed state, so their orderings
+    # are correlated rather than independent. This is intentional and defines the
+    # fixed, reproducible split — do NOT change it (e.g. seeding once for the whole
+    # run) unless you intend to change which images land in each client/test split.
     random.seed(config["seed"])
     shuffled = sorted(stems, key=lambda x: x[0].name)
     random.shuffle(shuffled)
