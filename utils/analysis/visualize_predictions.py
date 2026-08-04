@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
+from _gt_boxes import IMAGE_EXTS, load_gt_boxes
 
 # Distinct colors per class index; ground truth and predictions share the
 # palette so a green GT box and a green pred box are the same class.
@@ -34,21 +34,6 @@ CLASS_COLORS = [
     "#8c564b",  # brown
     "#e377c2",  # pink
 ]
-
-
-def load_gt_boxes(label_path: Path):
-    """Read a YOLO label file -> list of (class_id, cx, cy, w, h) in [0,1]."""
-    boxes = []
-    if not label_path.exists():
-        return boxes
-    for line in label_path.read_text().splitlines():
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        cls = int(float(parts[0]))
-        cx, cy, w, h = (float(v) for v in parts[1:5])
-        boxes.append((cls, cx, cy, w, h))
-    return boxes
 
 
 def draw_box(ax, x1, y1, x2, y2, color, label):

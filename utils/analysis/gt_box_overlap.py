@@ -33,23 +33,9 @@ from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
+from _gt_boxes import IMAGE_EXTS, load_gt_boxes
+
 FLAG_THRESHOLD = 0.5
-
-
-def load_gt_boxes(label_path: Path):
-    """Read a YOLO label file -> list of (class_id, cx, cy, w, h) in [0,1]."""
-    boxes = []
-    if not label_path.exists():
-        return boxes
-    for line in label_path.read_text().splitlines():
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        cls = int(float(parts[0]))
-        cx, cy, w, h = (float(v) for v in parts[1:5])
-        boxes.append((cls, cx, cy, w, h))
-    return boxes
 
 
 def xywh_to_xyxy(cx, cy, w, h):
