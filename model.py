@@ -20,7 +20,7 @@ def set_seed(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def load_model(num_classes=1):
+def load_model(num_classes=3):
     """Load COCO-pretrained YOLOv8n and adapt the head to num_classes.
     """
     model = YOLO(MODEL_PATH)
@@ -48,6 +48,37 @@ def load_model(num_classes=1):
         new_model.nc = num_classes
         model.model = new_model
     return model
+
+# YOLOv8n layer indices: backbone 0-9, neck 10-21, head 22.
+# https://docs.ultralytics.com/yolov5/tutorials/transfer_learning_with_frozen_layers
+_BACKBONE_END = 10
+_NECK_END = 22
+
+
+def apply_freeze(model, mode: str) -> None:
+    """Freeze layers for staged fine-tuning.
+
+    Shared by scripts/train_centralized.py and shapley/persistence.py so the
+    backbone/neck/head boundaries live in exactly one place.
+
+    Modes: 'head_only' (freeze backbone+neck), 'neck_head' (freeze backbone),
+    'full' (train everything).
+    """
+    if mode == "head_only":
+        freeze_up_to = _NECK_END
+    elif mode == "neck_head":
+        freeze_up_to = _BACKBONE_END
+    else:
+        freeze_up_to = 0
+
+    for i, layer in enumerate(model.model.model):
+        for param in layer.parameters():
+            param.requires_grad = i >= freeze_up_to
+
+    trainable = sum(p.numel() for p in model.model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.model.parameters())
+    print(f"Mode '{mode}': {trainable:,} / {total:,} trainable ({100 * trainable / total:.1f}%)")
+
 
 def _state_keys(model):
     """Ordered state_dict keys — the canonical tensor order shared across clients."""

@@ -41,6 +41,12 @@ import torch
 from ultralytics import YOLO
 from ultralytics.nn.tasks import DetectionModel
 
+# Reuse the shared freeze helper so backbone/neck/head boundaries live in one place.
+import sys
+from pathlib import Path as _Path
+sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from model import apply_freeze as _apply_freeze  # noqa: E402
+
 
 def set_seed(seed: int) -> None:
     """Seed Python, NumPy, and PyTorch RNGs for reproducible head init."""
@@ -50,11 +56,6 @@ def set_seed(seed: int) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-# YOLOv8n layer indices: backbone 0-9, neck 10-21, head 22
-# https://docs.ultralytics.com/yolov5/tutorials/transfer_learning_with_frozen_layers#freeze-all-except-final-detection-layers
-_BACKBONE_END = 10
-_NECK_END = 22
-
 
 def _build_model(weights: str | None, num_classes: int) -> YOLO:
     model = YOLO(weights if weights is not None else "yolov8n.pt")
@@ -62,25 +63,6 @@ def _build_model(weights: str | None, num_classes: int) -> YOLO:
     if model.model.nc != num_classes:
         model.model = DetectionModel(model.model.yaml, nc=num_classes).to(model.device)
     return model
-
-
-def _apply_freeze(model: YOLO, mode: str) -> None:
-    layers = list(model.model.model)
-    if mode == "head_only":
-        freeze_up_to = _NECK_END
-    elif mode == "neck_head":
-        freeze_up_to = _BACKBONE_END
-    else:
-        freeze_up_to = 0
-
-    for i, layer in enumerate(layers):
-        requires_grad = i >= freeze_up_to
-        for param in layer.parameters():
-            param.requires_grad = requires_grad
-
-    trainable = sum(p.numel() for p in model.model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.model.parameters())
-    print(f"Mode '{mode}': {trainable:,} / {total:,} trainable ({100 * trainable / total:.1f}%)")
 
 
 def train(

@@ -36,7 +36,8 @@ mkdir -p "$LOG_DIR"
 # Note: #SBATCH --output/--error headers above use logs/fl_%j.out (Slurm scheduler logs).
 # Application-level logs go to $LOG_DIR/ below.
 
-python server.py --rounds $ROUNDS --strategy $STRATEGY --mu $MU --seed $SEED > "$LOG_DIR/server.log" 2>&1 &
+SHAPLEY_LOG_DIR="${FL_DIR}/shapley_logs"
+python server.py --rounds $ROUNDS --strategy $STRATEGY --mu $MU --seed $SEED --log_dir "$SHAPLEY_LOG_DIR" > "$LOG_DIR/server.log" 2>&1 &
 
 echo "Waiting for server to start..."
 until grep -q "gRPC server running" "$LOG_DIR/server.log" 2>/dev/null; do
@@ -44,9 +45,9 @@ until grep -q "gRPC server running" "$LOG_DIR/server.log" 2>/dev/null; do
 done
 echo "Server is ready!"
 
-python client.py 0 $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS --num_classes 1 --strategy $STRATEGY --data_dir $DATA_DIR --seed $SEED > "$LOG_DIR/client_0.log" 2>&1 &
-python client.py 1 $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS --num_classes 1 --strategy $STRATEGY --data_dir $DATA_DIR --seed $SEED > "$LOG_DIR/client_1.log" 2>&1 &
-python client.py 2 $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS --num_classes 1 --strategy $STRATEGY --data_dir $DATA_DIR --seed $SEED > "$LOG_DIR/client_2.log" 2>&1 &
+python client.py 0 $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS --num_classes 3 --strategy $STRATEGY --data_dir $DATA_DIR --seed $SEED > "$LOG_DIR/client_0.log" 2>&1 &
+python client.py 1 $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS --num_classes 3 --strategy $STRATEGY --data_dir $DATA_DIR --seed $SEED > "$LOG_DIR/client_1.log" 2>&1 &
+python client.py 2 $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS --num_classes 3 --strategy $STRATEGY --data_dir $DATA_DIR --seed $SEED > "$LOG_DIR/client_2.log" 2>&1 &
 
 wait
 echo "FL complete. Outputs: $EXP_DIR"

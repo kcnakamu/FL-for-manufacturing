@@ -2,6 +2,7 @@ import flwr as fl
 import argparse
 from model import get_parameters, load_model, set_seed
 from strategies import build_strategy, add_weight_delta_logging, STRATEGIES
+from shapley.logger import add_update_logging
 
 
 def weighted_average(metrics):
@@ -16,7 +17,7 @@ def weighted_average(metrics):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rounds", type=int, default=10)
-    parser.add_argument("--num_classes", type=int, default=1)
+    parser.add_argument("--num_classes", type=int, default=3)
     parser.add_argument(
         "--strategy",
         choices=STRATEGIES,
@@ -33,6 +34,13 @@ def main():
                         help="Random seed for the initial global model (head init) "
                              "broadcast to all clients. Vary across runs to test "
                              "robustness to initialization.")
+    parser.add_argument("--log_dir", type=str, default=None,
+                        help="If set, persist per-round client updates + global "
+                             "checkpoints here for Shapley contribution analysis "
+                             "(see shapley/logger.py). Omit to disable logging.")
+    parser.add_argument("--disruption_round", type=int, default=None,
+                        help="Optional t* to tag in the Shapley log manifest (the "
+                             "round A/B go offline). Every round is logged regardless.")
     args = parser.parse_args()
 
     # Seed before building the model so the randomly initialized detection head
@@ -58,6 +66,13 @@ def main():
         mu=args.mu, temperature=args.temperature, eps=args.eps,
     )
     strategy = add_weight_delta_logging(strategy)
+
+    if args.log_dir:
+        print(f"Shapley update logging -> {args.log_dir}")
+        strategy = add_update_logging(
+            strategy, args.log_dir,
+            rule=args.strategy, disruption_round=args.disruption_round,
+        )
 
     print("Starting server")
     fl.server.start_server(
