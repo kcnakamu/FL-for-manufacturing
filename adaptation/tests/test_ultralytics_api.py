@@ -92,7 +92,8 @@ def test_kd_criterion_composes_with_real_loss():
     teacher.requires_grad_(False)
 
     criterion = KDDetectionLoss(v8DetectionLoss(student), teacher,
-                                [0.5, 0.3, 0.2], lam=1.0, temperature=2.0)
+                                [0.5, 0.3, 0.2], lam=1.0, temperature=2.0,
+                                student=student)
     student.criterion = criterion
     student.train()
 
@@ -115,6 +116,14 @@ def test_kd_criterion_composes_with_real_loss():
         v_loss, v_items = student.loss(batch)
     assert v_loss.shape == (3,), f"expected 3 loss items under no_grad, got {v_loss.shape}"
     assert v_items.shape == (3,)
+
+    # Eval-mode path with grad still enabled (belt-and-suspenders: some
+    # validator paths don't disable grad). The eval() flag must also gate KD.
+    student.eval()
+    e_loss, e_items = student.loss(batch)
+    assert e_loss.shape == (3,), f"expected 3 loss items in eval mode, got {e_loss.shape}"
+    assert e_items.shape == (3,)
+    student.train()
 
 
 def _run_all():

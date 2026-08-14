@@ -87,9 +87,10 @@ class KDDetectionLoss:
 
     def __init__(self, base, teacher: torch.nn.Module, class_weights,
                  lam: float = 1.0, temperature: float = 2.0,
-                 teacher_conf: float = 0.0):
+                 teacher_conf: float = 0.0, student: Optional[torch.nn.Module] = None):
         self.base = base
         self.teacher = teacher
+        self.student = student  # to detect eval mode during validation
         self.w = torch.as_tensor(list(class_weights), dtype=torch.float32)
         self.lam = float(lam)
         self.temperature = float(temperature)
@@ -108,11 +109,14 @@ class KDDetectionLoss:
         _, loss3, loss3_detached = self.base.get_assigned_targets_and_loss(preds, batch)
         batch_size = preds["boxes"].shape[0]
 
-        # KD is a training-only term. During validation/inference Ultralytics
-        # runs under no_grad and accumulates loss into a 3-wide tensor (box, cls,
-        # dfl), so returning a 4th item there crashes the validator. Gate on
-        # grad-enabled: training -> 4 items, validation -> plain 3-item loss.
-        if not torch.is_grad_enabled():
+        # KD is a training-only term. Ultralytics' validator accumulates loss
+        # into a 3-wide tensor (box, cls, dfl), so a 4th item (kd) crashes it.
+        # Fall back to the plain 3-item loss whenever we're NOT in a training
+        # forward -- detected by either no-grad context OR the student being in
+        # eval mode (Ultralytics flips the model to eval() for validation).
+        training_forward = torch.is_grad_enabled() and (
+            self.student is None or self.student.training)
+        if not training_forward:
             return loss3 * batch_size, loss3_detached
 
         t_scores = self._teacher_scores(batch["img"])
@@ -167,7 +171,8 @@ def make_kd_trainer(teacher_pt: str, class_weights: List[float], lam: float = 1.
             student = unwrap_model(self.model)
             student.criterion = KDDetectionLoss(
                 v8DetectionLoss(student), teacher, class_weights,
-                lam=lam, temperature=temperature, teacher_conf=teacher_conf)
+                lam=lam, temperature=temperature, teacher_conf=teacher_conf,
+                student=student)
             # get_validator() (called inside super()) resets this to 3 names.
             self.loss_names = ("box_loss", "cls_loss", "dfl_loss", "kd_loss")
 
