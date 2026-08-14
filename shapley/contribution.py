@@ -112,24 +112,35 @@ def class_retention_weights(matrix: Matrix, offline_players: List[str],
                             tau_end: Optional[int] = None) -> Dict[str, float]:
     """KD loss weights per class from the contribution matrix.
 
-    mode="static":  w~_c = sum_{i in offline} max(0, phi_{i,c}(tau=0))
-                    -- how much the offline clients contribute to class c at t*.
-    mode="lost":    w~_c = sum_{i in offline} max(0, phi_{i,c}(0) - phi_{i,c}(tau_end))
-                    -- how much of that contribution was LOST during C's
-                    adaptation (the manuscript's "knowledge lost during
-                    disruption"). tau_end defaults to the last checkpoint.
+    mode="static":     w~_c = sum_{i in offline} max(0, phi_{i,c}(tau=0))
+                       -- how much the offline clients contribute to class c at
+                       t*, i.e. the model's dependence on them at the moment of
+                       disruption.
+    mode="lost":       w~_c = sum_{i in offline} max(0, phi_{i,c}(0) - phi_{i,c}(tau_end))
+                       -- how much of that contribution DROPPED during C's
+                       adaptation. Caveat: a drop can mean genuine forgetting OR
+                       that C absorbed the class itself (its own specialty), so
+                       this over-weights classes C can already do -- see
+                       docs/persistence_results_explained.md.
+    mode="persistent": w~_c = sum_{i in offline} max(0, phi_{i,c}(tau_end))
+                       -- how much the offline clients STILL contribute after C
+                       has fine-tuned, i.e. the knowledge C could NOT absorb on
+                       its own -- the sharpest "irreplaceable" signal, and the
+                       one most aligned with what KD should protect.
 
+    tau_end defaults to the last checkpoint (used by 'lost' and 'persistent').
     Weights are normalized to sum to 1; if every raw weight is 0 (nothing to
     retain / nothing lost), a uniform distribution is returned.
     """
-    if mode not in ("static", "lost"):
-        raise ValueError(f"Unknown weight mode '{mode}' (use 'static' or 'lost').")
+    if mode not in ("static", "lost", "persistent"):
+        raise ValueError(f"Unknown weight mode '{mode}' "
+                         "(use 'static', 'lost', or 'persistent').")
     taus = sorted(matrix)
     if not taus or 0 not in matrix:
         raise ValueError("Contribution matrix has no tau=0 entry.")
     if tau_end is None:
         tau_end = taus[-1]
-    if mode == "lost" and tau_end not in matrix:
+    if mode in ("lost", "persistent") and tau_end not in matrix:
         raise ValueError(f"tau_end={tau_end} not in matrix (have {taus}).")
 
     raw: Dict[str, float] = {}
@@ -141,7 +152,9 @@ def class_retention_weights(matrix: Matrix, offline_players: List[str],
                 continue
             if mode == "static":
                 total += max(0.0, phi0)
-            else:
+            elif mode == "persistent":
+                total += max(0.0, matrix[tau_end].get(cls, {}).get(p, 0.0))
+            else:  # lost
                 phi_end = matrix[tau_end].get(cls, {}).get(p, 0.0)
                 total += max(0.0, phi0 - phi_end)
         raw[cls] = total
@@ -317,9 +330,9 @@ def parse_args():
     p.add_argument("--offline", nargs="+", default=["0", "1"],
                    help="Client ids that go offline at the disruption.")
     p.add_argument("--class_names", nargs="+", default=["Inclusion", "Patches", "Scratches"])
-    p.add_argument("--weight_mode", choices=["static", "lost"], default="lost")
+    p.add_argument("--weight_mode", choices=["static", "lost", "persistent"], default="lost")
     p.add_argument("--tau_end", type=int, default=None,
-                   help="Checkpoint for 'lost' weights (default: last).")
+                   help="Checkpoint for 'lost'/'persistent' weights (default: last).")
     p.add_argument("--ref_tau", type=int, default=0)
     # tau0-only standalone mode
     p.add_argument("--tau0_only", action="store_true",

@@ -140,6 +140,47 @@ def test_weights_lost_mode_uses_the_drop():
     assert w["Patches"] == 0.0 and w["Scratches"] == 0.0
 
 
+def test_weights_persistent_mode_uses_tau_end_contribution():
+    phi0 = {
+        "Inclusion": {"0": 0.30, "1": 0.10, "2": 0.01},
+        "Patches":   {"0": 0.20, "1": 0.00, "2": 0.02},
+        "Scratches": {"0": 0.10, "1": 0.00, "2": 0.30},
+    }
+    phi_end = {
+        "Inclusion": {"0": 0.40, "1": 0.20, "2": 0.05},  # offline persist 0.60
+        "Patches":   {"0": 0.10, "1": 0.10, "2": 0.05},  # offline persist 0.20
+        "Scratches": {"0": 0.00, "1": 0.00, "2": 0.40},  # offline persist 0.00
+    }
+    w = class_retention_weights(_matrix_from_phis(phi0, phi_end), ["0", "1"],
+                                CLASSES, mode="persistent", tau_end=10)
+    assert math.isclose(sum(w.values()), 1.0, abs_tol=1e-9)
+    # Uses tau_end (not tau0): Inclusion where offline STILL matter -> highest;
+    # Scratches (C absorbed it) -> zero. Opposite ranking to 'lost' here.
+    assert w["Inclusion"] > w["Patches"] > w["Scratches"] == 0.0
+    assert math.isclose(w["Inclusion"], 0.75, abs_tol=1e-9)   # 0.60 / 0.80
+
+
+def test_weights_persistent_vs_lost_can_disagree():
+    # Scratches: offline drop a lot (lost-mode high) but nothing persists
+    # (persistent-mode zero) -- the E5/t*=1 situation.
+    phi0 = {
+        "Inclusion": {"0": 0.50, "1": 0.25, "2": 0.0},
+        "Patches":   {"0": 0.43, "1": 0.34, "2": 0.0},
+        "Scratches": {"0": 0.30, "1": 0.20, "2": 0.0},
+    }
+    phi_end = {
+        "Inclusion": {"0": 0.46, "1": 0.33, "2": 0.0},   # persists
+        "Patches":   {"0": 0.41, "1": 0.28, "2": 0.0},   # persists
+        "Scratches": {"0": 0.16, "1": 0.10, "2": 0.0},   # halved (C absorbed)
+    }
+    m = _matrix_from_phis(phi0, phi_end)
+    lost = class_retention_weights(m, ["0", "1"], CLASSES, mode="lost", tau_end=10)
+    pers = class_retention_weights(m, ["0", "1"], CLASSES, mode="persistent", tau_end=10)
+    assert lost["Scratches"] == max(lost.values())        # lost over-weights Scratches
+    assert pers["Scratches"] == min(pers.values())        # persistent down-weights it
+    assert pers["Inclusion"] == max(pers.values())
+
+
 def test_weights_negative_phi_clipped():
     phi0 = {c: {"0": -0.2, "1": -0.1, "2": 0.3} for c in CLASSES}
     w = class_retention_weights(_matrix_from_phis(phi0), ["0", "1"], CLASSES, mode="static")
