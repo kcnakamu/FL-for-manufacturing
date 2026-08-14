@@ -23,7 +23,16 @@ This project trains a YOLOv8 object detector with Federated Learning (Flower) ac
 │   ├── shapley.py             # Exact N=3 Shapley values from the 8 coalition utilities
 │   ├── evaluate.py            # v(S) = mAP50 of a model on the shared test set
 │   ├── persistence.py         # Driver: retention curve rho_i(tau) + per-class forgetting
+│   ├── convergence.py         # Disruption-timing analysis: convergence round + t* choice
+│   ├── contribution.py        # Per-class contribution matrix + KD class weights
 │   └── tests/                 # Unit + integration tests (run without pytest)
+│
+├── adaptation/                # Post-disruption adaptation of Client 2 (C)
+│   ├── controller.py          # StageController: escalate freeze regime on val plateau
+│   ├── adaptive_finetune.py   # Driver: adaptive head_only -> neck_head fine-tuning
+│   ├── kd.py                  # Class-retention-weighted output-level knowledge distillation
+│   ├── distill_finetune.py    # Driver: fine-tune C with the KD loss attached
+│   └── tests/                 # Unit tests incl. Ultralytics API tripwire
 │
 ├── docs/
 │   └── shapley_explained.md   # Full walkthrough of the contribution-persistence method
@@ -53,13 +62,17 @@ This project trains a YOLOv8 object detector with Federated Learning (Flower) ac
 │   └── neu_data_validation.ipynb
 │
 └── experiments/               # All experiment outputs (git-ignored)
+    ├── convergence_analysis/  # Disruption-timing study (cross-experiment)
     └── <exp_name>/
         ├── fl/                # FL rounds 1–10: round_*/client_*/, final_model/, logs/
         │   └── shapley_logs/  # Per-round client updates + global checkpoints (for Shapley)
         ├── adaptation/        # Client 2 staged fine-tuning: head_only/, neck_head/, full/
+        ├── adaptive/          # Adaptive stage selection: seg*/ runs + trace.json
+        ├── distill/           # KD fine-tuning runs + distill_config.json
         ├── baselines/         # Comparison models: centralized/, client_only/, fl_full/
         ├── analysis/          # results.json, threshold_sweep.json, figures/
-        └── shapley/           # retention_curve.png, shapley_by_checkpoint.csv, ...
+        ├── shapley/           # retention_curve.png, shapley_by_checkpoint.csv, records.json
+        └── contribution/      # contribution_matrix.*, class_retention_weights.json, heatmap
 ```
 
 ---
@@ -127,6 +140,37 @@ dataset split scripts use `42` (preserving the original split). To assess whethe
 result is consistent rather than a lucky run, repeat the full experiment across
 several seeds — see [Robustness: repeat across seeds](#robustness-repeat-across-seeds).
 
+### Choosing the disruption round (timing analysis)
+
+The global model converges fast (often by round ~4 at 2 local epochs), so the
+disruption round `t*` and local-epoch count `E` should be justified by evidence.
+Run FL with a few values of `E`, then analyze all runs together:
+
+```bash
+# E-sweep (run.sh: ROUNDS EPOCHS STRATEGY DATA_DIR SEED EXP_NAME)
+for E in 1 2 5; do
+  sbatch run.sh 10 $E fedavg data/neu_data 0 conv_E${E}_seed0
+done
+
+# After they finish: evaluate every round's logged global on the central test set
+python -m shapley.convergence \
+    --log_dirs experiments/conv_E1_seed0/fl/shapley_logs \
+               experiments/conv_E2_seed0/fl/shapley_logs \
+               experiments/conv_E5_seed0/fl/shapley_logs \
+    --labels E1 E2 E5 --local_epochs 1 2 5 \
+    --test_dir data/neu_data/test \
+    --out_dir experiments/convergence_analysis \
+    --per_round_shapley
+```
+
+Outputs: per-round mAP50 curves with the detected plateau round marked
+(`convergence_curves.png`, incl. a compute-fair round×E panel), a recommended
+`t*` per run (`convergence.json`), and — with `--per_round_shapley` — exact
+per-client Shapley values at every round (`shapley_by_round_*.csv/png`) showing
+when contributions stabilize. Plateau rule: no mAP50 improvement > `--min_delta`
+(0.005) for `--patience` (2) consecutive rounds. Use the recommended `(E, t*)`
+for the disruption experiment and the Shapley persistence analysis below.
+
 ### Stage 1 — Head-Only Adaptation (Rounds 11–15)
 Client 2 initializes from the Round-10 global model. Backbone frozen, only detection head trained.
 
@@ -163,6 +207,50 @@ python scripts/train_centralized.py \
 `scripts/train_centralized.py` takes `--seed` (default `0`) — use the same seed as
 the FL run when repeating a full experiment. It's recorded in each run's
 `train_config.json`.
+
+### Adaptive stage selection (alternative to fixed Stages 1–3)
+
+Instead of fixed epoch counts, escalate `head_only → neck_head` (optionally
+`→ full`) when Client 2's **validation mAP50 plateaus** — no improvement
+> `--min_delta` for `--patience` consecutive segments:
+
+```bash
+python -m adaptation.adaptive_finetune \
+    --weights experiments/disruption_neu_fedavg_seed0/fl/final_model/client_2_final.pt \
+    --data data/neu_data/client_2/data.yaml \
+    --out_dir experiments/disruption_neu_fedavg_seed0/adaptive \
+    --seg_epochs 5 --patience 2 --min_delta 0.005 --max_epochs 100
+```
+
+Training proceeds in short segments (per-stage LRs: 1e-3 / 1e-4 / 1e-5); the
+controller decides continue / escalate / stop after each. `trace.json` records
+every segment's val mAP50 and the switch epochs — the evidence for *when* the
+escalation happened. Add `--stages head_only neck_head full` to allow full
+fine-tuning as the final stage.
+
+### Knowledge distillation with class-retention weights
+
+Retain what the offline factories (A, B) taught the model — without their data.
+A frozen teacher (the pre-disruption global) runs on C's batches and the
+student's class predictions are pulled toward it, weighted per class by the
+contribution the offline clients stand to lose (from the
+[contribution matrix](#per-class-contribution-matrix)):
+
+```bash
+python -m adaptation.distill_finetune \
+    --weights experiments/disruption_neu_fedavg_seed0/fl/final_model/client_2_final.pt \
+    --weights_json experiments/disruption_neu_fedavg_seed0/contribution/class_retention_weights.json \
+    --data data/neu_data/client_2/data.yaml \
+    --out_dir experiments/disruption_neu_fedavg_seed0/distill \
+    --mode neck_head --epochs 75 --lam 1.0 --temperature 2.0
+```
+
+Total loss: `box + cls + dfl + λ · Σ_c w_c · KD_c`. `--lam 0` reproduces a
+plain fine-tune (sanity baseline); `--teacher_conf 0.25` restricts distillation
+to anchors the teacher is confident about; `--adaptive` combines KD with the
+adaptive stage controller. Verify the KD gain by re-running the persistence +
+contribution analyses on the distilled trajectory (retention ρ_A, ρ_B should
+improve for the high-weight classes).
 
 ---
 
@@ -303,6 +391,34 @@ clearly nonzero — the retention ratio `ρ_i(τ) = φ_i(τ) / φ_i(t*)` is unst
 | `forgetting_per_class.csv` | per-class AP@50 over fine-tuning (the corroborating forgetting proxy) |
 | `results.json` | everything above + config |
 
+### Per-class contribution matrix
+
+The manuscript's **knowledge contribution matrix** (factories × defect classes):
+exact Shapley values computed per class from the same 8 coalition evaluations a
+persistence run already performs (dumped to `records.json` — no extra training):
+
+```bash
+python -m shapley.contribution \
+    --records experiments/disruption_neu_fedavg_seed0/shapley/records.json \
+    --out_dir experiments/disruption_neu_fedavg_seed0/contribution \
+    --offline 0 1 --weight_mode lost
+```
+
+Outputs: `contribution_matrix.csv/json` (φ per player × class × checkpoint),
+`retention_matrix.csv` (per-class ρ), `contribution_heatmap.png`, and
+`class_retention_weights.json` — the per-class KD weights. `--weight_mode lost`
+weights classes by contribution the offline clients **lost** during C's
+adaptation (φ at τ=0 minus φ at the last checkpoint); `static` uses the τ=0
+contribution directly. A `--tau0_only` mode computes the static matrix straight
+from FL logs without any fine-tuning:
+
+```bash
+python -m shapley.contribution --tau0_only \
+    --log_dir experiments/disruption_neu_fedavg_seed0/fl/shapley_logs \
+    --t_star 4 --test_dir data/neu_data/test \
+    --out_dir experiments/disruption_neu_fedavg_seed0/contribution
+```
+
 **Notes.**
 - `--num_classes` must match the FL run (default `3` on both sides). Per-class
   forgetting needs `nc ≥ 2`.
@@ -312,7 +428,10 @@ clearly nonzero — the retention ratio `ρ_i(τ) = φ_i(τ) / φ_i(t*)` is unst
   give wrong Shapley values.
 - The pure math (reconstruction, Shapley, retention assembly) is unit-tested:
   `python -m shapley.tests.test_shapley` (and `test_reconstruct`, `test_logger`,
-  `test_persistence`).
+  `test_persistence`, `test_convergence`, `test_contribution`; the adaptation
+  package has `python -m adaptation.tests.test_controller`, `test_kd`, and
+  `test_ultralytics_api` — the last one tripwires the pinned Ultralytics APIs
+  the KD loss relies on).
 
 ---
 

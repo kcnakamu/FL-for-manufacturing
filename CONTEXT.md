@@ -116,6 +116,21 @@ scripts/
   train_centralized.py             # Staged fine-tuning for post-disruption adaptation + baselines
   analyze_results.py               # Batch evaluation of Round10 / Stage1 / Stage2 checkpoints
 
+shapley/                           # Exact 3-client Shapley contribution analysis
+  logger.py                        # Auto-logs per-round client updates + globals during FL
+  reconstruct.py                   # Rebuild any coalition's model retrain-free (fedavg/fedprox)
+  shapley.py                       # Exact N=3 Shapley from the 8 coalition utilities
+  evaluate.py                      # v(S) = mAP50 (+ per-class AP50) on the shared test set
+  persistence.py                   # Driver: retention rho_i(tau) as C fine-tunes; dumps records.json
+  convergence.py                   # Disruption-timing: convergence round + t* per local-epoch count E
+  contribution.py                  # Contribution matrix (factories x classes) + KD class weights
+
+adaptation/                        # Post-disruption adaptation of Client 2
+  controller.py                    # StageController: head_only -> neck_head on val plateau
+  adaptive_finetune.py             # Adaptive staged fine-tuning driver (writes trace.json)
+  kd.py                            # Class-retention-weighted output-level knowledge distillation
+  distill_finetune.py              # KD fine-tuning driver (teacher = pre-disruption global)
+
 utils/
   analysis/
     tune_threshold.py              # Sweep YOLO conf threshold; find optimal by F1/mAP50/etc.
@@ -162,6 +177,12 @@ experiments/<exp_name>/
     results.json                   # Output of analyze_results.py
     threshold_sweep.json           # Output of tune_threshold.py
     figures/
+  shapley/                         # persistence outputs: retention_curve.png, records.json, CSVs
+  contribution/                    # contribution_matrix.*, class_retention_weights.json, heatmap
+  adaptive/                        # adaptive stage-selection runs: seg*/ + trace.json
+  distill/                         # KD fine-tuning runs + distill_config.json
+
+experiments/convergence_analysis/  # cross-experiment disruption-timing study
 ```
 
 ---
@@ -193,11 +214,29 @@ Note: Crazing had 0 TP across all stages — it was nearly invisible, which moti
 
 ---
 
-## What's Next
+## Important: freeze bug fixed (2026-08-14)
+
+Ultralytics silently re-enables `requires_grad` for any parameter not passed via
+`model.train(freeze=...)`, so earlier `head_only`/`neck_head` runs — which only
+called `apply_freeze()` and passed `freeze=[]` — actually trained the **full
+model**. Fixed by `model.freeze_indices(mode)` now passed at every train call.
+Any staged-adaptation results produced before this fix should be re-run before
+being used in the manuscript.
+
+---
+
+## What's Next (results campaign for the manuscript)
 
 1. Re-run `split_neu_data.py` to generate the new dataset (Inclusion / Patches / Scratches)
-2. Run the disruption FL experiment: `sbatch run.sh 10 5 fedavg data/neu_data disruption_neu_fedavg`
-3. Run adaptation stages 1 and 2 with `scripts/train_centralized.py`
-4. Tune threshold with `utils/analysis/tune_threshold.py`
-5. Analyze with `scripts/analyze_results.py`
-6. Run baselines for comparison
+2. **Disruption timing**: E-sweep FL runs (`sbatch run.sh 10 E fedavg …` for E ∈ {1,2,5},
+   ≥2 seeds), then `python -m shapley.convergence … --per_round_shapley` → pick (E, t*)
+3. Run the disruption FL experiment at the chosen (E, t*)
+4. **Contribution matrix**: `python -m shapley.persistence --t_star <t*> …` then
+   `python -m shapley.contribution --records …/records.json --offline 0 1`
+5. **Adaptation comparison**: fixed stages (`scripts/train_centralized.py`) vs adaptive
+   (`python -m adaptation.adaptive_finetune`) — trace.json gives the switch epochs
+6. **Knowledge distillation**: `python -m adaptation.distill_finetune --weights_json
+   …/class_retention_weights.json` (λ=0 sanity first); re-run persistence + contribution
+   on the KD trajectory to show improved retention ρ_A, ρ_B
+7. Threshold tuning + `scripts/analyze_results.py` per checkpoint
+8. Baselines (centralized, client-only, FL-full) for comparison
