@@ -45,7 +45,7 @@ from ultralytics.nn.tasks import DetectionModel
 import sys
 from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
-from model import apply_freeze as _apply_freeze  # noqa: E402
+from model import apply_freeze as _apply_freeze, freeze_indices as _freeze_indices  # noqa: E402
 
 
 def set_seed(seed: int) -> None:
@@ -99,7 +99,9 @@ def train(
         device=device,
         project=str(out_path.resolve()),
         name=mode,
-        freeze=[],
+        # The trainer re-enables requires_grad for params not listed here, so
+        # the freeze must go through this arg — apply_freeze alone is undone.
+        freeze=_freeze_indices(mode),
         seed=seed,
     )
 

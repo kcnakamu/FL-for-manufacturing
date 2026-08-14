@@ -55,25 +55,42 @@ _BACKBONE_END = 10
 _NECK_END = 22
 
 
+def freeze_indices(mode: str) -> list:
+    """Layer indices to pass as model.train(freeze=...) for staged fine-tuning.
+
+    Ultralytics' BaseTrainer force-re-enables requires_grad for any float
+    param not covered by the `freeze` train arg, so setting requires_grad
+    manually (apply_freeze) is NOT sufficient — the freeze list must go
+    through .train(freeze=freeze_indices(mode)).
+
+    Modes: 'head_only' (freeze backbone+neck), 'neck_head' (freeze backbone),
+    'full' (train everything).
+    """
+    if mode == "head_only":
+        return list(range(_NECK_END))
+    if mode == "neck_head":
+        return list(range(_BACKBONE_END))
+    return []
+
+
 def apply_freeze(model, mode: str) -> None:
     """Freeze layers for staged fine-tuning.
 
     Shared by scripts/train_centralized.py and shapley/persistence.py so the
     backbone/neck/head boundaries live in exactly one place.
 
+    NOTE: for training, callers must ALSO pass freeze=freeze_indices(mode) to
+    model.train() — the Ultralytics trainer re-enables requires_grad for any
+    param not listed there, silently undoing this function.
+
     Modes: 'head_only' (freeze backbone+neck), 'neck_head' (freeze backbone),
     'full' (train everything).
     """
-    if mode == "head_only":
-        freeze_up_to = _NECK_END
-    elif mode == "neck_head":
-        freeze_up_to = _BACKBONE_END
-    else:
-        freeze_up_to = 0
+    frozen = set(freeze_indices(mode))
 
     for i, layer in enumerate(model.model.model):
         for param in layer.parameters():
-            param.requires_grad = i >= freeze_up_to
+            param.requires_grad = i not in frozen
 
     trainable = sum(p.numel() for p in model.model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.model.parameters())

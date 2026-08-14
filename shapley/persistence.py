@@ -117,7 +117,7 @@ def _finetune_on_c(pt_path: Path, c_data: str, mode: str, epochs: int, lr: float
                    project: Path, name: str, seed: int = 0) -> Path:
     """Fine-tune one coalition model on C's data; return the run's save_dir."""
     from ultralytics import YOLO
-    from model import apply_freeze
+    from model import apply_freeze, freeze_indices
     model = YOLO(str(pt_path))
     apply_freeze(model, mode)
     model.train(
@@ -131,7 +131,9 @@ def _finetune_on_c(pt_path: Path, c_data: str, mode: str, epochs: int, lr: float
         device=device,
         project=str(project),
         name=name,
-        freeze=[],
+        # The trainer re-enables requires_grad for params not listed here, so
+        # the freeze must go through this arg — apply_freeze alone is undone.
+        freeze=freeze_indices(mode),
         seed=seed,
         save_period=save_period,
         exist_ok=True,
