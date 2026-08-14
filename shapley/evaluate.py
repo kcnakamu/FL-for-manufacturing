@@ -92,7 +92,12 @@ def evaluate_checkpoint(
 
     # Per-class AP@50: ap_class_index lists only classes present in the test set,
     # so index the per-class arrays through it (never assume 0..nc-1).
-    names = model.names
+    # Class names come from the test yaml, NOT model.names: models rebuilt from
+    # logged weights (persistence._save_pt) carry default names ('0','1','2'),
+    # which would silently mismatch the real class names downstream
+    # (contribution matrix, per-class forgetting).
+    with open(test_yaml) as fh:
+        names = yaml.safe_load(fh)["names"]
     per_class = {str(names[int(c)]): float(metrics.box.ap50[i])
                  for i, c in enumerate(metrics.box.ap_class_index)}
 
