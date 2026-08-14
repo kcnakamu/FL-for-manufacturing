@@ -9,6 +9,8 @@ Module map (see docs/shapley_explained.md):
   evaluate.py     - v(S) = mAP50 of a reconstructed model on the shared test set
   logger.py       - non-invasive capture of per-round client updates + global checkpoints
   persistence.py  - driver: retention curve rho_i(tau) + per-class forgetting proxy
+  convergence.py  - disruption-timing analysis: per-round global convergence + t* choice
+  contribution.py - per-class contribution matrix (factories x classes) + KD class weights
 """
 
 from .shapley import exact_shapley, general_shapley, coalitions

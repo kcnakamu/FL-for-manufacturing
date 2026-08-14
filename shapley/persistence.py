@@ -229,6 +229,11 @@ def run(
     finally:
         Path(test_yaml).unlink(missing_ok=True)
 
+    # Raw per-(tau, coalition) utilities -- the interchange artifact consumed by
+    # shapley/contribution.py (per-class contribution matrix + KD weights).
+    with open(out / "records.json", "w") as fh:
+        json.dump(records, fh, indent=2)
+
     # ---- assemble Shapley + retention ----
     phi_by_tau, skipped = shapley_over_checkpoints(records, players)
     if skipped:
