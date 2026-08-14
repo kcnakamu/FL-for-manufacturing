@@ -108,6 +108,13 @@ class KDDetectionLoss:
         _, loss3, loss3_detached = self.base.get_assigned_targets_and_loss(preds, batch)
         batch_size = preds["boxes"].shape[0]
 
+        # KD is a training-only term. During validation/inference Ultralytics
+        # runs under no_grad and accumulates loss into a 3-wide tensor (box, cls,
+        # dfl), so returning a 4th item there crashes the validator. Gate on
+        # grad-enabled: training -> 4 items, validation -> plain 3-item loss.
+        if not torch.is_grad_enabled():
+            return loss3 * batch_size, loss3_detached
+
         t_scores = self._teacher_scores(batch["img"])
         kd, _ = kd_class_term(preds["scores"], t_scores.to(preds["scores"].dtype),
                               self.w, self.temperature, self.teacher_conf)

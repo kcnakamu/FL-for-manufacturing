@@ -108,6 +108,14 @@ def test_kd_criterion_composes_with_real_loss():
     assert torch.isfinite(loss).all()
     assert loss[3] > 0, "kd term should be positive for differing student/teacher"
 
+    # Validation path: Ultralytics runs the validator under no_grad and
+    # accumulates into a 3-wide loss tensor, so KD must fall back to 3 items
+    # (else the validator crashes on a 4-vs-3 size mismatch).
+    with torch.no_grad():
+        v_loss, v_items = student.loss(batch)
+    assert v_loss.shape == (3,), f"expected 3 loss items under no_grad, got {v_loss.shape}"
+    assert v_items.shape == (3,)
+
 
 def _run_all():
     fns = [g for name, g in sorted(globals().items()) if name.startswith("test_") and callable(g)]
