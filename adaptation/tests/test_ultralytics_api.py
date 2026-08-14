@@ -103,25 +103,28 @@ def test_kd_criterion_composes_with_real_loss():
         "cls": torch.tensor([[1.0]]),
         "bboxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
     }
+    # Training forward: the backpropped loss (1st return) carries KD as a 4th
+    # element (so loss.sum() trains on it), but the TRACKED vector (2nd return)
+    # stays 3-wide -- Ultralytics sizes the validator's accumulator from it and
+    # validates the KD-free EMA, so a 4-wide tracked vector crashes validation.
     loss, loss_items = student.loss(batch)
-    assert loss.shape == (4,), f"expected 4 loss items (box, cls, dfl, kd), got {loss.shape}"
-    assert loss_items.shape == (4,)
+    assert loss.shape == (4,), f"expected 4-wide backprop loss (…, kd), got {loss.shape}"
+    assert loss_items.shape == (3,), f"tracked loss must stay 3-wide, got {loss_items.shape}"
     assert torch.isfinite(loss).all()
     assert loss[3] > 0, "kd term should be positive for differing student/teacher"
+    assert criterion.last_kd > 0  # logged per epoch via callback
 
-    # Validation path: Ultralytics runs the validator under no_grad and
-    # accumulates into a 3-wide loss tensor, so KD must fall back to 3 items
-    # (else the validator crashes on a 4-vs-3 size mismatch).
+    # Validation path (no_grad): plain 3-item detection loss, no teacher forward.
     with torch.no_grad():
         v_loss, v_items = student.loss(batch)
-    assert v_loss.shape == (3,), f"expected 3 loss items under no_grad, got {v_loss.shape}"
+    assert v_loss.shape == (3,), f"expected 3-wide loss under no_grad, got {v_loss.shape}"
     assert v_items.shape == (3,)
 
-    # Eval-mode path with grad still enabled (belt-and-suspenders: some
-    # validator paths don't disable grad). The eval() flag must also gate KD.
+    # Eval-mode path with grad enabled (belt-and-suspenders for validator paths
+    # that don't disable grad): the eval() flag must also gate KD off.
     student.eval()
     e_loss, e_items = student.loss(batch)
-    assert e_loss.shape == (3,), f"expected 3 loss items in eval mode, got {e_loss.shape}"
+    assert e_loss.shape == (3,), f"expected 3-wide loss in eval mode, got {e_loss.shape}"
     assert e_items.shape == (3,)
     student.train()
 

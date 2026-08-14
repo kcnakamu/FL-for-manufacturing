@@ -95,6 +95,7 @@ class KDDetectionLoss:
         self.lam = float(lam)
         self.temperature = float(temperature)
         self.teacher_conf = float(teacher_conf)
+        self.last_kd = float("nan")  # last training-batch KD term, for logging
 
     def _teacher_scores(self, img: torch.Tensor) -> torch.Tensor:
         device_type = img.device.type
@@ -109,11 +110,12 @@ class KDDetectionLoss:
         _, loss3, loss3_detached = self.base.get_assigned_targets_and_loss(preds, batch)
         batch_size = preds["boxes"].shape[0]
 
-        # KD is a training-only term. Ultralytics' validator accumulates loss
-        # into a 3-wide tensor (box, cls, dfl), so a 4th item (kd) crashes it.
-        # Fall back to the plain 3-item loss whenever we're NOT in a training
-        # forward -- detected by either no-grad context OR the student being in
-        # eval mode (Ultralytics flips the model to eval() for validation).
+        # The tracked loss vector (2nd return) stays 3-wide (box, cls, dfl) in
+        # EVERY path. Ultralytics sizes the validator's loss accumulator from
+        # trainer.loss_items and validates the KD-free EMA model, so a 4-wide
+        # tracked vector would crash validation with a 4-vs-3 mismatch. KD is
+        # instead folded ONLY into the summed loss (1st return) that the trainer
+        # backpropagates via loss.sum() -- so it still trains the student.
         training_forward = torch.is_grad_enabled() and (
             self.student is None or self.student.training)
         if not training_forward:
@@ -123,10 +125,10 @@ class KDDetectionLoss:
         kd, _ = kd_class_term(preds["scores"], t_scores.to(preds["scores"].dtype),
                               self.w, self.temperature, self.teacher_conf)
         kd = self.lam * kd
+        self.last_kd = float(kd.detach())
 
-        loss = torch.cat([loss3, kd.view(1)])
-        loss_detached = torch.cat([loss3_detached, kd.detach().view(1)])
-        return loss * batch_size, loss_detached
+        loss = torch.cat([loss3, kd.view(1)])          # 4-wide: summed for backprop
+        return loss * batch_size, loss3_detached       # tracked vector stays 3-wide
 
 
 def load_class_weights(path, class_names: List[str]) -> List[float]:
@@ -160,8 +162,14 @@ def make_kd_trainer(teacher_pt: str, class_weights: List[float], lam: float = 1.
     """
     from ultralytics import YOLO
     from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import LOGGER
     from ultralytics.utils.loss import v8DetectionLoss
     from ultralytics.utils.torch_utils import unwrap_model
+
+    def _log_kd(trainer):
+        kd = getattr(unwrap_model(trainer.model), "criterion", None)
+        if kd is not None and hasattr(kd, "last_kd"):
+            LOGGER.info(f"KD term (last train batch): {kd.last_kd:.4f}")
 
     class KDDetectionTrainer(DetectionTrainer):
         def _setup_train(self):
@@ -173,7 +181,10 @@ def make_kd_trainer(teacher_pt: str, class_weights: List[float], lam: float = 1.
                 v8DetectionLoss(student), teacher, class_weights,
                 lam=lam, temperature=temperature, teacher_conf=teacher_conf,
                 student=student)
-            # get_validator() (called inside super()) resets this to 3 names.
-            self.loss_names = ("box_loss", "cls_loss", "dfl_loss", "kd_loss")
+            # NOTE: loss_names stays 3 (box, cls, dfl). KD is folded into the
+            # backpropped total, not tracked as a 4th item -- see KDDetectionLoss
+            # for why the tracked vector must stay 3-wide. The KD term is logged
+            # per epoch via the callback below instead of a progress column.
+            self.add_callback("on_fit_epoch_end", _log_kd)
 
     return KDDetectionTrainer
