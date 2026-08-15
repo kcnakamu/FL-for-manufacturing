@@ -8,10 +8,12 @@ raw records to <out_dir>/records.json. This module is pure post-processing:
 
   contribution matrix   phi[tau][class or "overall"][player]
   retention matrix      rho[tau][class][player] = phi(tau) / phi(ref_tau)
-  KD class weights      w_c ~ contribution of the OFFLINE clients to class c
-                        that was LOST during C's adaptation ("lost" mode) or
-                        present at t* ("static" mode) -> class_retention_weights.json,
-                        consumed by adaptation/distill_finetune.py.
+  KD class weights      w_c ~ contribution of the OFFLINE clients to class c:
+                        dropped during adaptation ("lost"), present at t*
+                        ("static"), or surviving adaptation ("persistent" --
+                        the recommended "irreplaceable knowledge" signal)
+                        -> class_retention_weights.json, consumed by
+                        adaptation/distill_finetune.py.
 
 Primary CLI (after a persistence run):
 
@@ -180,7 +182,7 @@ def run_from_records(records_path: str, out_dir: str, offline: List[str],
     weights = class_retention_weights(matrix, offline, class_names,
                                       mode=weight_mode, tau_end=tau_end)
 
-    out = Path(out_dir)
+    out = Path(out_dir).resolve()  # absolute: avoid Ultralytics runs/detect/ prefix
     out.mkdir(parents=True, exist_ok=True)
     resolved_tau_end = tau_end if tau_end is not None else sorted(matrix)[-1]
     results = {
@@ -210,7 +212,7 @@ def run_tau0_only(log_dir: str, t_star: int, out_dir: str, test_dir: str,
     from shapley.reconstruct import reconstruct
     from shapley.shapley import coalitions
 
-    out = Path(out_dir)
+    out = Path(out_dir).resolve()  # absolute: avoid Ultralytics runs/detect/ prefix
     out.mkdir(parents=True, exist_ok=True)
     manifest = load_manifest(log_dir)
     rule = rule or manifest.get("rule", "fedavg")

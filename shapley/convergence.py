@@ -178,7 +178,8 @@ def run(
     if local_epochs is not None and len(local_epochs) != len(log_dirs):
         raise ValueError("--local_epochs must match --log_dirs in length.")
 
-    out = Path(out_dir)
+    # Absolute so Ultralytics doesn't prepend runs/detect/ to relative projects.
+    out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     test_yaml = build_test_yaml(test_dir, class_names)
 

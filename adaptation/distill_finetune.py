@@ -71,7 +71,8 @@ def run(
         w = [1.0 / len(class_names)] * len(class_names)
         print("[distill] no --weights_json given -> uniform class weights")
 
-    out = Path(out_dir)
+    # Absolute so Ultralytics doesn't prepend runs/detect/ to a relative project.
+    out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     set_seed(seed)
     trainer_cls = make_kd_trainer(teacher, w, lam=lam, temperature=temperature,

@@ -183,7 +183,8 @@ def run(
     from shapley.evaluate import build_test_yaml, evaluate_checkpoint
 
     class_names = class_names or ["Inclusion", "Patches", "Scratches"]
-    out = Path(out_dir)
+    # Absolute so Ultralytics doesn't prepend runs/detect/ to relative projects.
+    out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
     manifest = load_manifest(log_dir)

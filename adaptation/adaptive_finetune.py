@@ -53,7 +53,8 @@ def run(
     from model import freeze_indices, set_seed
 
     stage_lrs = stage_lrs or DEFAULT_STAGE_LRS
-    out = Path(out_dir)
+    # Absolute so Ultralytics doesn't prepend runs/detect/ to a relative project.
+    out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     set_seed(seed)
 
