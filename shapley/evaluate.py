@@ -62,8 +62,13 @@ def evaluate_checkpoint(
     iou: Optional[float] = None,
     out_dir: str = "shapley_eval",
     name: str = "checkpoint",
+    split: str = "test",
 ) -> Dict:
-    """v(S) for a saved .pt model: mAP50, mAP50-95, and per-class AP@50."""
+    """v(S) for a saved .pt model: mAP50, mAP50-95, and per-class AP@50.
+
+    `split` selects which key of the data yaml to evaluate ("test" by default;
+    pass "val" to score against a centralized validation set).
+    """
     from ultralytics import YOLO
 
     device = _device(device)
@@ -77,7 +82,7 @@ def evaluate_checkpoint(
 
     metrics = model.val(
         data=test_yaml,
-        split="test",
+        split=split,
         imgsz=imgsz,
         batch=16,
         workers=0,
