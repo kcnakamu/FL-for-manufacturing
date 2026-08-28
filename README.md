@@ -101,14 +101,67 @@ Central test set: 45 images (15 per class, balanced). Each client val: 30 images
 **Generate the dataset split:**
 ```bash
 python utils/dataset_creation/split_neu_data.py \
-    --src NEU-DET \
+    --src data/NEU-DET-SOURCE \
     --out data/neu_data \
+    --preset neu3 \
     --seed 42
 ```
 
 `--seed` controls *which* images land in each client/test split (the per-client
-class counts are fixed by `SPLIT_CONFIG`). Vary it to re-shuffle the split for a
+class counts are fixed by the preset). Vary it to re-shuffle the split for a
 robustness check; it defaults to `42` (the original split).
+
+### 6-class / 6-client split (`--preset neu6`)
+
+A second partition covering **all six** NEU-DET classes across six clients, used
+for the contribution/exclusive-owner experiments. Holdout is taken first —
+45 test + 30 val per class, both class-balanced and centralized — leaving
+**225 images per class** to distribute (224 for scratches; see below).
+
+| | crazing | inclusion | patches | pitted | rolled-in | scratches | Total |
+|-|---------|-----------|---------|--------|-----------|-----------|-------|
+| `client_0` — C1 generalist          | 50  | 60  | 90  | 0   | 50  | 85 | 335 |
+| `client_1` — C2 generalist          | 40  | 110 | 110 | 0   | 0   | 84 | 344 |
+| `client_2` — C3 partial specialist  | 0   | 0   | 0   | 0   | 175 | 30 | 205 |
+| `client_3` — C4 partial specialist  | 110 | 30  | 0   | 0   | 0   | 0  | 140 |
+| `client_4` — C5 exclusive owner     | 0   | 0   | 0   | 225 | 0   | 0  | 225 |
+| `client_5` — C6 redundancy control  | 25  | 25  | 25  | 0   | 0   | 25 | 100 |
+| **Total train** | 225 | 225 | 225 | 225 | 225 | 224 | **1349** |
+| Val (shared)    | 30  | 30  | 30  | 30  | 30  | 30  | 180 |
+| Test (central)  | 45  | 45  | 45  | 45  | 45  | 45  | 270 |
+
+The design labels these C1–C6; on disk they are the zero-based `client_0`–`client_5`
+folders `client.py` expects, so **C5 (exclusive owner) is `client_4`**.
+
+```bash
+python utils/dataset_creation/split_neu_data.py \
+    --src data/NEU-DET-SOURCE \
+    --out data/neu6_data \
+    --preset neu6
+```
+
+**Centralized validation.** Unlike `neu3`, all clients share one class-balanced
+validation set (`data/neu6_data/val/`). No client training images are spent on
+validation — each client dir receives a copy of the shared set, so
+`client.py`'s per-round `val(split="val")` and its image count keep working
+unchanged.
+
+**Invariants**, enforced by `validate_preset()` on the config and re-checked by
+`verify_output()` against the written files (both raise rather than `assert`, so
+`-O` cannot strip them):
+- every class sums to exactly 225 across clients, less any declared pool
+  exclusion (so 224 for scratches);
+- `pitted_surface` appears only in `client_4` — **including at the box level**.
+  NEU-DET files each image under one class folder but its XML may annotate other
+  classes, so an image outside `pitted_surface/` can still carry a pitted box.
+  Exactly one does (`scratches_228.jpg`), and it is dropped from the pool
+  entirely rather than relabelled — labels stay a faithful conversion of the
+  source XML. The resulting shortfall is declared in `expected_pool_exclusions`
+  and cross-checked against the data at runtime, so if the source ever changes
+  the run fails instead of silently shorting a client;
+- test/val are exactly 45/30 per class, disjoint from each other and from all
+  client training data;
+- clients share no training images; every image has a non-empty label.
 
 ---
 
