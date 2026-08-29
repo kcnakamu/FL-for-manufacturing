@@ -38,13 +38,22 @@ CLIENT_LABELS = {
     6: "C6 redundancy control",
 }
 
-# The exclusive-owner sanity check: C5 saw only pitted_surface, so it must score
-# high there and near-zero everywhere else. If that pattern is absent the column
-# indexing is wrong, not the model.
+# Indexing sanity check.
+#
+# The premise is that a teacher cannot score on a class it received no
+# supervision for. "No supervision" must be measured in BOXES, not in the image
+# allocation: NEU-DET files each image under one class folder while its XML may
+# annotate others, so C5 -- allocated only pitted_surface images -- still carries
+# 49 Patches boxes and legitimately scores on Patches. Checking against the image
+# allocation instead produces a false alarm on exactly that cell.
+#
+# So: read each client's training labels, and require that classes with zero
+# boxes score near zero. That is six independent checks rather than one, and a
+# misaligned column cannot satisfy all of them.
 SANITY_TEACHER = 5
 SANITY_CLASS = "Pitted_surface"
 SANITY_MIN_OWN = 0.10
-SANITY_MAX_OTHER = 0.05
+SANITY_MAX_UNSEEN = 0.05
 
 
 def score_bank(bank: Path, val_yaml: Path, device: str, imgsz: int,
@@ -87,32 +96,66 @@ def column_stats(class_names: list[str], matrix: dict) -> list[dict]:
     return stats
 
 
-def sanity_check(class_names: list[str], matrix: dict) -> list[str]:
-    """Verify the exclusive owner's signature. Misalignment shows up here first."""
+def training_box_counts(data_dir: Path, class_names: list[str]) -> dict[str, dict[str, int]]:
+    """Per-teacher count of training boxes per class, read from the label files."""
+    counts: dict[str, dict[str, int]] = {}
+    for i in range(1, 7):
+        seen = {c: 0 for c in class_names}
+        lbl_dir = data_dir / f"client_{i - 1}" / "labels" / "train"
+        for txt in lbl_dir.glob("*.txt"):
+            for ln in txt.read_text().split("\n"):
+                if ln.strip():
+                    seen[class_names[int(ln.split()[0])]] += 1
+        counts[f"local_c{i}"] = seen
+    return counts
+
+
+def sanity_check(class_names: list[str], matrix: dict,
+                 box_counts: dict | None) -> list[str]:
+    """Verify score-vs-supervision structure. Misalignment shows up here first."""
     warnings = []
+
     row = matrix.get(f"local_c{SANITY_TEACHER}")
     if row is None:
         return ["sanity: C5 row missing"]
 
     own = row.get(SANITY_CLASS, 0.0)
-    others = {c: v for c, v in row.items() if c != SANITY_CLASS}
-    worst_other, worst_val = max(others.items(), key=lambda kv: kv[1])
-
     if own < SANITY_MIN_OWN:
         warnings.append(
-            f"C5 (pitted-only) scores {own:.4f} on {SANITY_CLASS}, below {SANITY_MIN_OWN}. "
-            "Expected high -- suspect misaligned class indexing or a failed teacher."
+            f"C5 scores {own:.4f} on {SANITY_CLASS}, below {SANITY_MIN_OWN}. Expected "
+            "high -- suspect misaligned class indexing or a failed teacher."
         )
-    if worst_val > SANITY_MAX_OTHER:
+    best_class = max(row, key=row.get)
+    if best_class != SANITY_CLASS:
         warnings.append(
-            f"C5 (pitted-only) scores {worst_val:.4f} on '{worst_other}', a class it "
-            f"never saw (limit {SANITY_MAX_OTHER}). Suspect misaligned class indexing."
+            f"C5's best class is '{best_class}' ({row[best_class]:.4f}), not "
+            f"{SANITY_CLASS} ({own:.4f}). Column indexing is almost certainly wrong."
         )
-    if own < worst_val:
+
+    owner_col = {m: matrix[m][SANITY_CLASS] for m in matrix}
+    intruders = {m: v for m, v in owner_col.items()
+                 if m != f"local_c{SANITY_TEACHER}" and v > SANITY_MAX_UNSEEN}
+    if intruders:
         warnings.append(
-            f"C5's best class is '{worst_other}' ({worst_val:.4f}), not {SANITY_CLASS} "
-            f"({own:.4f}). Column indexing is almost certainly wrong."
+            f"{SANITY_CLASS} is exclusively owned by C{SANITY_TEACHER}, but "
+            + ", ".join(f"{m}={v:.4f}" for m, v in sorted(intruders.items()))
+            + " also score on it."
         )
+
+    if box_counts is None:
+        warnings.append(
+            "note: --data_dir not readable, so the zero-supervision check was skipped"
+        )
+        return warnings
+
+    # A teacher with zero boxes of a class cannot legitimately score on it.
+    for teacher, row in matrix.items():
+        for cls, score in row.items():
+            if box_counts[teacher][cls] == 0 and score > SANITY_MAX_UNSEEN:
+                warnings.append(
+                    f"{teacher} scores {score:.4f} on '{cls}' with ZERO training boxes "
+                    f"of it (limit {SANITY_MAX_UNSEEN}). Suspect misaligned indexing."
+                )
     return warnings
 
 
@@ -156,6 +199,9 @@ def main() -> None:
     ap.add_argument("--out_dir", default="experiments/teacher_bank/competence")
     ap.add_argument("--device", default="")
     ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--data_dir", default="data/neu6_data",
+                    help="Partition root, read to check scores against actual "
+                         "per-class training-box counts.")
     args = ap.parse_args()
 
     bank, val_yaml = Path(args.bank), Path(args.val_yaml)
@@ -165,7 +211,10 @@ def main() -> None:
     stats = column_stats(class_names, matrix)
     print_table(class_names, matrix, stats)
 
-    warnings = sanity_check(class_names, matrix)
+    data_dir = Path(args.data_dir)
+    box_counts = (training_box_counts(data_dir, class_names)
+                  if (data_dir / "client_0" / "labels" / "train").is_dir() else None)
+    warnings = sanity_check(class_names, matrix, box_counts)
     if warnings:
         print("\n" + "!" * 72)
         print("SANITY CHECK FAILED -- do not trust this matrix:")
@@ -173,8 +222,9 @@ def main() -> None:
             print(f"  ! {w_}")
         print("!" * 72)
     else:
-        print(f"\n[OK] Sanity: C5 (pitted-only) peaks on {SANITY_CLASS} "
-              f"({matrix['local_c5'][SANITY_CLASS]:.4f}) and stays near zero elsewhere.")
+        print(f"\n[OK] Sanity: C5 peaks on {SANITY_CLASS} "
+              f"({matrix['local_c5'][SANITY_CLASS]:.4f}), owns that column exclusively, "
+              "and every zero-supervision cell scores near zero.")
 
     with open(out_dir / "competence_matrix.csv", "w", newline="") as fh:
         w_ = csv.writer(fh)
@@ -189,6 +239,7 @@ def main() -> None:
         "class_names": class_names,
         "matrix": matrix,
         "per_class": stats,
+        "training_box_counts": box_counts,
         "sanity_warnings": warnings,
     }, indent=2))
     print(f"\n[DONE] -> {out_dir}/competence_matrix.{{csv,json}}")
