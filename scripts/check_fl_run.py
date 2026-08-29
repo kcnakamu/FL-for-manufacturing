@@ -34,6 +34,9 @@ def main() -> None:
     ap.add_argument("--clients", type=int, default=6)
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--num_classes", type=int, default=6)
+    ap.add_argument("--plateau_delta", type=float, default=0.005,
+                    help="Mean mAP50 gain per round below which the curve counts "
+                         "as flat (default: %(default)s)")
     args = ap.parse_args()
 
     fl = Path(args.fl_dir)
@@ -47,8 +50,11 @@ def main() -> None:
     if len(rds) != args.rounds:
         problems.append(f"{len(rds)} round dirs, expected {args.rounds}")
 
-    print(f"\n{'round':>6s} {'clients':>8s} {'mAP50':>9s} {'mAP50-95':>10s}   participation")
-    print("-" * 62)
+    print(f"\n{'round':>6s} {'clients':>8s} {'mAP50':>9s} {'d(mAP50)':>10s} "
+          f"{'mAP50-95':>10s}   participation")
+    print("-" * 74)
+    curve: list[float] = []
+    prev = None
     for d in rds:
         rows = {}
         for cid in range(args.clients):
@@ -68,8 +74,35 @@ def main() -> None:
         m5095 = [r.get("mAP50-95") for r in rows.values() if r.get("mAP50-95") is not None]
         avg50 = sum(m50) / len(m50) if m50 else float("nan")
         avg5095 = sum(m5095) / len(m5095) if m5095 else float("nan")
-        print(f"{d.name.replace('round_',''):>6s} {n:>8d} {avg50:>9.4f} "
+        delta = "" if prev is None else f"{avg50 - prev:+10.4f}"
+        print(f"{d.name.replace('round_',''):>6s} {n:>8d} {avg50:>9.4f} {delta:>10s} "
               f"{avg5095:>10.4f}   {mark}")
+        if avg50 == avg50:            # skip NaN
+            curve.append(avg50)
+            prev = avg50
+
+    # Plateau: the disruption round t* wants a converged pre-disruption model, so
+    # that post-disruption change is attributable to the departure rather than to
+    # the model still climbing. Report where a 3-round mean improvement first
+    # drops below --plateau_delta.
+    if len(curve) >= 5:
+        win, t_star = 3, None
+        for i in range(win, len(curve)):
+            recent = (curve[i] - curve[i - win]) / win
+            if recent < args.plateau_delta:
+                t_star = i + 1          # rounds are 1-indexed
+                break
+        total_gain = curve[-1] - curve[0]
+        last_win = (curve[-1] - curve[-1 - win]) / win if len(curve) > win else float("nan")
+        print(f"\nconvergence: total gain {total_gain:+.4f}, "
+              f"mean gain over the last {win} rounds {last_win:+.4f}/round")
+        if t_star is None:
+            print(f"  STILL CLIMBING at round {len(curve)} "
+                  f"(never fell below {args.plateau_delta}/round) -- "
+                  f"consider more rounds before fixing t*.")
+        else:
+            print(f"  plateau reached around round {t_star} "
+                  f"(< {args.plateau_delta}/round) -- a reasonable t* candidate.")
 
     # Final checkpoints
     print("\nfinal checkpoints:")
