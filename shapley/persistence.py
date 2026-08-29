@@ -325,12 +325,12 @@ def parse_args():
     p.add_argument("--t_star", type=int, required=True, help="Disruption round t* "
                    "(A/B go offline). Uses global_round_{t*-1} as v(emptyset) baseline.")
     p.add_argument("--out_dir", default="experiments/shapley", help="Output directory")
-    p.add_argument("--test_dir", default="data/neu_data/test", help="Shared test set dir")
-    p.add_argument("--c_data", default="data/neu_data/client_2/data.yaml",
+    p.add_argument("--test_dir", default="data/neu6_data/test", help="Shared test set dir")
+    p.add_argument("--c_data", default="data/neu6_data/client_4/data.yaml",
                    help="C's data.yaml (the client that keeps fine-tuning)")
-    p.add_argument("--num_classes", type=int, default=3,
+    p.add_argument("--num_classes", type=int, default=6,
                    help="Detection classes used in the FL run (must match it).")
-    p.add_argument("--class_names", nargs="+", default=["Inclusion", "Patches", "Scratches"])
+    p.add_argument("--class_names", nargs="+", default=["Crazing", "Inclusion", "Patches", "Pitted_surface", "Rolled-in_scale", "Scratches"])
     p.add_argument("--mode", choices=["head_only", "neck_head", "full"], default="neck_head",
                    help="Freeze regime for the C fine-tuning of every coalition.")
     p.add_argument("--epochs", type=int, default=60)

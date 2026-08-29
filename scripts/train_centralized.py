@@ -45,7 +45,11 @@ from ultralytics.nn.tasks import DetectionModel
 import sys
 from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
-from model import apply_freeze as _apply_freeze, freeze_indices as _freeze_indices  # noqa: E402
+from model import (  # noqa: E402
+    apply_freeze as _apply_freeze,
+    freeze_indices as _freeze_indices,
+    load_model as _load_model,
+)
 
 
 def set_seed(seed: int) -> None:
@@ -58,10 +62,36 @@ def set_seed(seed: int) -> None:
 
 
 def _build_model(weights: str | None, num_classes: int) -> YOLO:
-    model = YOLO(weights if weights is not None else "yolov8n.pt")
-    # Rebuild detection head if the checkpoint's class count doesn't match (e.g. yolov8n.pt is nc=80)
-    if model.model.nc != num_classes:
-        model.model = DetectionModel(model.model.yaml, nc=num_classes).to(model.device)
+    """Load a checkpoint and adapt the head to num_classes, KEEPING pretrained weights.
+
+    This used to replace model.model with a fresh DetectionModel whenever the
+    class count differed, which silently discarded every pretrained tensor --
+    backbone and neck included. Starting from yolov8n.pt (nc=80) with any other
+    num_classes therefore trained from random init while looking like transfer
+    learning, and initialization dominates results on this dataset.
+
+    model.load_model() does the transfer properly: every shape-matching tensor is
+    copied and only the head is randomly initialized. Note this changes behaviour
+    for runs that hit the nc-mismatch path before this fix.
+    """
+    if weights is None:
+        return _load_model(num_classes=num_classes)
+
+    model = YOLO(weights)
+    if model.model.nc == num_classes:
+        return model
+
+    pretrained = model.model.state_dict()
+    new_model = DetectionModel(model.model.yaml, nc=num_classes).to(model.device)
+    target = new_model.state_dict()
+    transfer = {k: v for k, v in pretrained.items()
+                if k in target and v.shape == target[k].shape}
+    new_model.load_state_dict(transfer, strict=False)
+    print(f"[_build_model] Adapted {weights} head to nc={num_classes}: "
+          f"transferred {len(transfer)} tensors, "
+          f"{len(target) - len(transfer)} randomly initialized (head).")
+    new_model.nc = num_classes
+    model.model = new_model
     return model
 
 
@@ -131,7 +161,7 @@ def parse_args():
     parser.add_argument("--weights", default=None, help="Starting .pt checkpoint (omit to use yolov8n.pt)")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=0.01)
-    parser.add_argument("--num_classes", type=int, default=3)
+    parser.add_argument("--num_classes", type=int, default=6)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--output_dir", default="adaptation",

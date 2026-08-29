@@ -330,10 +330,10 @@ def parse_args():
     p.add_argument("--local_epochs", nargs="+", type=int, default=None,
                    help="Local epochs E per log dir -- enables the compute-fair "
                         "(round x E) comparison panel.")
-    p.add_argument("--test_dir", default="data/neu_data/test", help="Shared test set dir")
+    p.add_argument("--test_dir", default="data/neu6_data/test", help="Shared test set dir")
     p.add_argument("--out_dir", default="experiments/convergence_analysis")
-    p.add_argument("--num_classes", type=int, default=3)
-    p.add_argument("--class_names", nargs="+", default=["Inclusion", "Patches", "Scratches"])
+    p.add_argument("--num_classes", type=int, default=6)
+    p.add_argument("--class_names", nargs="+", default=["Crazing", "Inclusion", "Patches", "Pitted_surface", "Rolled-in_scale", "Scratches"])
     p.add_argument("--min_delta", type=float, default=0.005,
                    help="Improvement below this doesn't reset the plateau counter.")
     p.add_argument("--patience", type=int, default=2,

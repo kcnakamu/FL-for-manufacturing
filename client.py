@@ -11,7 +11,7 @@ import copy
 
 
 class YOLOClient(fl.client.NumPyClient):
-    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 3, strategy: str = "fedavg", seed: int = 0):
+    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 6, strategy: str = "fedavg", seed: int = 0):
         """Initializes a YOLO Model for client {cid}.
 
         Args:
@@ -19,7 +19,7 @@ class YOLOClient(fl.client.NumPyClient):
             data_dir (str): data directory
             out_dir (str): base output directory for FL round artifacts (e.g. experiments/<exp_name>/fl)
             epochs (int, optional): Number of epochs run locally. Defaults to 5.
-            num_classes (int, optional): Number of detection classes. Defaults to 3.
+            num_classes (int, optional): Number of detection classes. Defaults to 6.
             strategy (str, optional): Aggregation strategy used at Server level.
             seed (int, optional): Random seed forwarded to YOLO training (augmentation,
                 dataloader order). Defaults to 0.
@@ -264,7 +264,7 @@ def main():
     parser.add_argument("cid", type=str)
     parser.add_argument("server_host", type=str, default="localhost")
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--num_classes", type=int, default=3)
+    parser.add_argument("--num_classes", type=int, default=6)
     parser.add_argument(
         "--strategy",
         choices=["adaptive", "fedawa", "fedavg", "fedprox"],

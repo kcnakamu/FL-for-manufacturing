@@ -20,7 +20,7 @@ def set_seed(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def load_model(num_classes=3):
+def load_model(num_classes=6):
     """Load COCO-pretrained YOLOv8n and adapt the head to num_classes.
     """
     model = YOLO(MODEL_PATH)

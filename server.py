@@ -17,7 +17,12 @@ def weighted_average(metrics):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rounds", type=int, default=10)
-    parser.add_argument("--num_classes", type=int, default=3)
+    parser.add_argument("--num_classes", type=int, default=6)
+    parser.add_argument("--num_clients", type=int, default=6,
+                        help="Clients required before a round starts. Must equal "
+                             "the number actually launched: if it is lower, Flower "
+                             "begins as soon as that many connect and silently "
+                             "trains on a subset.")
     parser.add_argument(
         "--strategy",
         choices=STRATEGIES,
@@ -54,12 +59,13 @@ def main():
 
     shared_kwargs = dict(
         fraction_fit=1.0,
-        min_fit_clients=3,
-        min_available_clients=3,
+        min_fit_clients=args.num_clients,
+        min_available_clients=args.num_clients,
         initial_parameters=initial_params,
         evaluate_metrics_aggregation_fn=weighted_average,
     )
 
+    print(f"Waiting for {args.num_clients} clients per round")
     print(f"Setting strategy: {args.strategy}")
     strategy = build_strategy(
         args.strategy, shared_kwargs,

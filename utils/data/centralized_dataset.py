@@ -63,8 +63,9 @@ def get_centralized_dataset(data_dir: Path, output_dir: Path, class_names: list[
 
 if __name__ == "__main__":
     get_centralized_dataset(
-        data_dir="data/neu_data",
-        output_dir="data/neu_centralized",
-        class_names=["Inclusion", "Patches", "Scratches"],
+        data_dir="data/neu6_data",
+        output_dir="data/neu6_centralized",
+        class_names=["Crazing", "Inclusion", "Patches",
+                     "Pitted_surface", "Rolled-in_scale", "Scratches"],
     )
 

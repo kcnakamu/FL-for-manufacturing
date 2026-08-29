@@ -331,7 +331,7 @@ def parse_args():
     p.add_argument("--out_dir", default="experiments/contribution")
     p.add_argument("--offline", nargs="+", default=["0", "1"],
                    help="Client ids that go offline at the disruption.")
-    p.add_argument("--class_names", nargs="+", default=["Inclusion", "Patches", "Scratches"])
+    p.add_argument("--class_names", nargs="+", default=["Crazing", "Inclusion", "Patches", "Pitted_surface", "Rolled-in_scale", "Scratches"])
     p.add_argument("--weight_mode", choices=["static", "lost", "persistent"], default="lost")
     p.add_argument("--tau_end", type=int, default=None,
                    help="Checkpoint for 'lost'/'persistent' weights (default: last).")
@@ -341,8 +341,8 @@ def parse_args():
                    help="Static matrix straight from FL logs (no fine-tuning).")
     p.add_argument("--log_dir", default=None, help="Shapley log dir (tau0_only mode).")
     p.add_argument("--t_star", type=int, default=None, help="Disruption round (tau0_only mode).")
-    p.add_argument("--test_dir", default="data/neu_data/test")
-    p.add_argument("--num_classes", type=int, default=3)
+    p.add_argument("--test_dir", default="data/neu6_data/test")
+    p.add_argument("--num_classes", type=int, default=6)
     p.add_argument("--device", default=None)
     p.add_argument("--imgsz", type=int, default=480)
     p.add_argument("--rule", default=None)
