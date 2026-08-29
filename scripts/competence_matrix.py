@@ -56,6 +56,24 @@ SANITY_MIN_OWN = 0.10
 SANITY_MAX_UNSEEN = 0.05
 
 
+def read_bank_seed(bank: Path) -> int | None:
+    """Recover the training seed for a bank.
+
+    Banks trained before --seed existed have no top-level "seed" key, but they do
+    record it inside shared_hyperparameters (TEACHER_HP has always carried
+    seed: 0). Fall back to that so those banks stay usable without hand-editing.
+    Note the explicit `is None` checks: seed 0 is falsy, so `or` would discard it.
+    """
+    manifest = bank / "manifest.json"
+    if not manifest.exists():
+        return None
+    d = json.loads(manifest.read_text())
+    seed = d.get("seed")
+    if seed is None:
+        seed = d.get("shared_hyperparameters", {}).get("seed")
+    return seed
+
+
 def score_bank(bank: Path, val_yaml: Path, device: str, imgsz: int,
                out_dir: Path) -> tuple[list[str], dict]:
     class_names = [str(n) for n in yaml.safe_load(val_yaml.read_text())["names"]]
@@ -199,6 +217,9 @@ def main() -> None:
     ap.add_argument("--out_dir", default="experiments/teacher_bank/competence")
     ap.add_argument("--device", default="")
     ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--seed", type=int, default=None,
+                    help="Override the seed recorded for this bank. Only needed if "
+                         "the manifest predates seed recording and the fallback fails.")
     ap.add_argument("--data_dir", default="data/neu6_data",
                     help="Partition root, read to check scores against actual "
                          "per-class training-box counts.")
@@ -233,10 +254,10 @@ def main() -> None:
             k = f"local_c{i}"
             w_.writerow([k, CLIENT_LABELS[i]] + [f"{matrix[k][c]:.6f}" for c in class_names])
 
-    manifest = bank / "manifest.json"
-    seed = json.loads(manifest.read_text()).get("seed") if manifest.exists() else None
+    seed = read_bank_seed(bank) if args.seed is None else args.seed
     if seed is None:
-        print("[WARN] no seed in the bank manifest; aggregation across seeds needs it")
+        print("[WARN] no seed found in the bank manifest; pass --seed to stamp it "
+              "explicitly, otherwise across-seed aggregation will reject this run")
 
     (out_dir / "competence_matrix.json").write_text(json.dumps({
         "seed": seed,
