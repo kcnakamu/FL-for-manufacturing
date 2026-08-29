@@ -156,13 +156,14 @@ def _freeze(path: Path) -> None:
 
 
 def train_one(cid: int, data_dir: Path, out_dir: Path, device: str, workers: int,
-              epochs: int, imgsz: int) -> dict:
+              epochs: int, imgsz: int, seed: int) -> dict:
     label = CLIENT_LABELS[cid]
-    print(f"\n{'=' * 70}\n[client_{cid}] {label} -- training\n{'=' * 70}")
+    print(f"\n{'=' * 70}\n[client_{cid}] {label} -- training (seed {seed})\n{'=' * 70}")
 
     hp = dict(TEACHER_HP)
     hp["epochs"] = epochs
     hp["imgsz"] = imgsz
+    hp["seed"] = seed
 
     # Seed before building so the random head init is reproducible across clients.
     set_seed(hp["seed"])
@@ -215,6 +216,7 @@ def train_one(cid: int, data_dir: Path, out_dir: Path, device: str, workers: int
         "train_images": n_train,
         "num_classes": NUM_CLASSES,
         "coco_pretrained": True,
+        "seed": seed,
         "hyperparameters": hp,
         "results_csv": str((save_dir / "results.csv").resolve()),
     }
@@ -265,6 +267,10 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=0)
     ap.add_argument("--epochs", type=int, default=TEACHER_HP["epochs"])
     ap.add_argument("--imgsz", type=int, default=TEACHER_HP["imgsz"])
+    ap.add_argument("--seed", type=int, default=TEACHER_HP["seed"],
+                    help="Training seed, shared by all six teachers in this bank. "
+                         "Vary ACROSS banks (each into its own --out_dir) to measure "
+                         "seed noise; the data split is seeded separately and stays fixed.")
     ap.add_argument("--clients", default="all",
                     help="Comma-separated client indices, or 'all'.")
     ap.add_argument("--skip_existing", action="store_true",
@@ -278,6 +284,18 @@ def main() -> None:
 
     preflight(data_dir)
 
+    # One bank = one seed. Mixing them silently would make the aggregator's
+    # across-seed variance meaningless, so refuse rather than overwrite.
+    manifest_path = out_dir / "teacher_bank" / "manifest.json"
+    if manifest_path.exists():
+        prev_seed = json.loads(manifest_path.read_text()).get("seed")
+        if prev_seed is not None and prev_seed != args.seed:
+            raise ValueError(
+                f"{manifest_path} holds a seed-{prev_seed} bank but --seed {args.seed} "
+                f"was requested. Give each seed its own --out_dir "
+                f"(e.g. --out_dir experiments/teacher_bank_seed{args.seed})."
+            )
+
     cids = (list(range(NUM_CLIENTS)) if args.clients == "all"
             else [int(c) for c in args.clients.split(",")])
 
@@ -290,9 +308,8 @@ def main() -> None:
             print("[INFO] All requested teachers already exist; nothing to train.")
 
     metas = [train_one(cid, data_dir, out_dir, args.device, args.workers,
-                       args.epochs, args.imgsz) for cid in cids]
+                       args.epochs, args.imgsz, args.seed) for cid in cids]
 
-    manifest_path = out_dir / "teacher_bank" / "manifest.json"
     if manifest_path.exists():
         prev = json.loads(manifest_path.read_text()).get("teachers", [])
         trained = {m["client"] for m in metas}
@@ -301,7 +318,9 @@ def main() -> None:
     manifest_path.write_text(json.dumps({
         "num_classes": NUM_CLASSES,
         "checkpoint_source": "last.pt",
-        "shared_hyperparameters": {**TEACHER_HP, "epochs": args.epochs, "imgsz": args.imgsz},
+        "seed": args.seed,
+        "shared_hyperparameters": {**TEACHER_HP, "epochs": args.epochs,
+                                   "imgsz": args.imgsz, "seed": args.seed},
         "teachers": metas,
     }, indent=2))
 

@@ -233,7 +233,14 @@ def main() -> None:
             k = f"local_c{i}"
             w_.writerow([k, CLIENT_LABELS[i]] + [f"{matrix[k][c]:.6f}" for c in class_names])
 
+    manifest = bank / "manifest.json"
+    seed = json.loads(manifest.read_text()).get("seed") if manifest.exists() else None
+    if seed is None:
+        print("[WARN] no seed in the bank manifest; aggregation across seeds needs it")
+
     (out_dir / "competence_matrix.json").write_text(json.dumps({
+        "seed": seed,
+        "bank": str(bank.resolve()),
         "val_yaml": str(val_yaml.resolve()),
         "imgsz": args.imgsz,
         "class_names": class_names,
