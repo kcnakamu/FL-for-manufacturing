@@ -232,6 +232,62 @@ def load_kd_weights(path: str | Path, class_names: list[str],
     return lambda_c, w
 
 
+# A class is orphaned when the surviving teachers hold less than this fraction
+# of its competence-weighted belief. It is a FRACTION, not an epsilon: a softmax
+# never emits exactly zero, so dropping the only teacher that knows a class
+# leaves ~1e-6 of numerical residue spread over teachers that know nothing.
+# Renormalising that residue would hand them ~1/K weight each and distill noise.
+ORPHAN_MASS = 0.01
+
+
+def select_teachers(lambda_c: list[float], w: list[list[float]],
+                    keep: list[int],
+                    orphan_mass: float = ORPHAN_MASS
+                    ) -> tuple[list[float], list[list[float]], list[int]]:
+    """Restrict the bank to a subset of teachers, renormalising each class column.
+
+    Used for the ablation where a teacher is withheld entirely (as opposed to
+    the disruption arms, where a departed client's *data* is gone but its frozen
+    teacher remains). Dropping rows breaks the convex-combination property, so
+    every column is renormalised over the survivors.
+
+    A class retaining less than `orphan_mass` of its original weight is ORPHANED:
+    no surviving teacher meaningfully knows it. Those columns fall back to uniform
+    and lambda_c is zeroed, because distilling a class nobody knows injects noise.
+    The orphaned indices are returned so the caller can report them -- that is
+    exactly the monopoly-loss condition the experiment is about.
+
+    Returns:
+        (lambda_c, w, orphaned_class_indices) for the kept teachers.
+    """
+    if not keep:
+        raise ValueError("keep must name at least one teacher")
+    nc = len(lambda_c)
+    sub = [list(w[k]) for k in keep]
+
+    lam = list(lambda_c)
+    orphaned: list[int] = []
+    for i in range(nc):
+        col = sum(sub[k][i] for k in range(len(keep)))
+        if col < orphan_mass:
+            orphaned.append(i)
+            for k in range(len(keep)):
+                sub[k][i] = 1.0 / len(keep)
+            lam[i] = 0.0
+        else:
+            for k in range(len(keep)):
+                sub[k][i] /= col
+
+    total = sum(lam)
+    if total <= 0:
+        raise ValueError(
+            "Every class is orphaned by this teacher selection -- no knowledge "
+            "would be distilled at all."
+        )
+    lam = [v / total for v in lam]
+    return lam, sub, orphaned
+
+
 def report(cw: CompetenceWeights) -> None:
     nc, K = len(cw.class_names), len(cw.teachers)
     w_col = max(max(len(c) for c in cw.class_names), 9) + 2

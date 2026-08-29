@@ -296,6 +296,79 @@ def test_kd_weights_rejects_unrenormalized_subset():
     raise AssertionError("teacher subset without renormalisation should raise")
 
 
+
+# ---------------------------------------------------- teacher selection -----
+
+def test_select_teachers_renormalizes_columns():
+    from adaptation.competence_weights import derive_weights, select_teachers
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA), tau=3.0)
+    lam, w, orphaned = select_teachers(cw.lambda_c, cw.w, keep=[0, 1, 5])
+    assert len(w) == 3
+    for i in range(len(CLASSES)):
+        if i not in orphaned:
+            approx(sum(w[k][i] for k in range(3)), 1.0, 1e-9)
+    approx(sum(lam), 1.0, 1e-9)
+
+
+def test_dropping_the_monopoly_owner_orphans_its_class():
+    """Withhold C5 and Pitted_surface has no teacher left -- the worst case."""
+    from adaptation.competence_weights import derive_weights, select_teachers
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA), tau=3.0)
+    keep = [0, 1, 2, 3, 5]                     # everyone except local_c5
+    lam, w, orphaned = select_teachers(cw.lambda_c, cw.w, keep)
+    pit = CLASSES.index("Pitted_surface")
+    assert pit in orphaned
+    approx(lam[pit], 0.0)                      # nothing to distill for it
+    approx(sum(w[k][pit] for k in range(5)), 1.0, 1e-9)   # still a valid column
+
+
+def test_dropping_a_redundant_generalist_orphans_nothing():
+    """The contrast: C1 leaving costs no class its teacher."""
+    from adaptation.competence_weights import derive_weights, select_teachers
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA), tau=3.0)
+    _, _, orphaned = select_teachers(cw.lambda_c, cw.w, keep=[1, 2, 3, 4, 5])
+    assert orphaned == []
+
+
+def test_orphaning_uses_surviving_mass_not_an_epsilon():
+    """A softmax never emits exactly 0, so an absolute epsilon cannot detect this.
+
+    After dropping C5, Pitted_surface retains ~3.6e-06 of its weight spread over
+    teachers with no pitted supervision at all. That is far above any sane
+    epsilon, yet renormalising it would give each of them ~1/K belief.
+    """
+    from adaptation.competence_weights import derive_weights, select_teachers
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA), tau=3.0)
+    pit = CLASSES.index("Pitted_surface")
+    keep = [0, 1, 2, 3, 5]
+    surviving = sum(cw.w[k][pit] for k in keep)
+    assert 0.0 < surviving < 1e-4, surviving      # nonzero, but negligible
+    _, _, orphaned = select_teachers(cw.lambda_c, cw.w, keep)
+    assert pit in orphaned
+
+
+def test_orphan_threshold_does_not_fire_on_a_real_contributor():
+    """Dropping C1 from Crazing (w=0.42) leaves real mass -- must NOT orphan."""
+    from adaptation.competence_weights import derive_weights, select_teachers
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA), tau=3.0)
+    cra = CLASSES.index("Crazing")
+    keep = [1, 2, 3, 4, 5]
+    surviving = sum(cw.w[k][cra] for k in keep)
+    assert surviving > 0.5, surviving
+    _, _, orphaned = select_teachers(cw.lambda_c, cw.w, keep)
+    assert cra not in orphaned
+
+
+def test_select_teachers_requires_a_nonempty_keep():
+    from adaptation.competence_weights import derive_weights, select_teachers
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA))
+    try:
+        select_teachers(cw.lambda_c, cw.w, keep=[])
+    except ValueError:
+        return
+    raise AssertionError("empty keep should raise")
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0
