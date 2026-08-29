@@ -190,6 +190,48 @@ def check_class_order(cw: CompetenceWeights, data_yaml: str | Path) -> None:
         )
 
 
+def load_kd_weights(path: str | Path, class_names: list[str],
+                    teachers: list[str] | None = None):
+    """Read a kd_weights JSON back into (lambda_c, w[k][c]) for KDDetectionLoss.
+
+    Both are consumed positionally by class index and teacher index, so the
+    ordering is validated rather than trusted: `class_names` must be the dataset's
+    order and `teachers` the order the checkpoints are loaded in. A silent
+    permutation here would apply every class's weights to the wrong logit
+    channel, and nothing downstream would look wrong.
+
+    Returns:
+        (lambda_c, w) -- lambda_c is (nc,), w is (K, nc) as nested lists.
+    """
+    d = json.loads(Path(path).read_text())
+    file_classes = d["class_names"]
+    if file_classes != list(class_names):
+        raise ValueError(
+            f"class order mismatch.\n  {path}: {file_classes}\n  dataset: "
+            f"{list(class_names)}\nWeights are applied by class index."
+        )
+
+    file_teachers = d["teachers"]
+    teachers = list(teachers) if teachers is not None else file_teachers
+    missing = [t for t in teachers if t not in d["w"]]
+    if missing:
+        raise ValueError(f"{path} has no weights for teacher(s) {missing} "
+                         f"(has {sorted(d['w'])}).")
+
+    lambda_c = [float(d["lambda_c"][c]) for c in class_names]
+    w = [[float(d["w"][t][c]) for c in class_names] for t in teachers]
+
+    for i, c in enumerate(class_names):
+        col = sum(w[k][i] for k in range(len(teachers)))
+        if abs(col - 1.0) > 1e-4:
+            raise ValueError(
+                f"teacher weights for '{c}' sum to {col:.6f}, not 1. If you "
+                f"selected a subset of teachers, the columns must be renormalised "
+                f"or the fused target is not a valid probability."
+            )
+    return lambda_c, w
+
+
 def report(cw: CompetenceWeights) -> None:
     nc, K = len(cw.class_names), len(cw.teachers)
     w_col = max(max(len(c) for c in cw.class_names), 9) + 2

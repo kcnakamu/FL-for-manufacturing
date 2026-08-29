@@ -230,6 +230,72 @@ def test_class_order_match_passes(tmp_path=Path("/tmp")):
     y.unlink()
 
 
+
+
+
+# ------------------------------------------------------- kd_weights I/O -----
+
+def _write_weights(tmp: Path, tau=3.0):
+    from adaptation.competence_weights import derive_weights
+    cw = derive_weights(make_competence(MEASURED_MU, MEASURED_SIGMA), tau=tau)
+    tmp.write_text(json.dumps(cw.to_dict(), indent=2))
+    return cw
+
+
+def test_kd_weights_roundtrip():
+    from adaptation.competence_weights import load_kd_weights
+    p = Path("/tmp/_kdw.json"); cw = _write_weights(p)
+    lam, w = load_kd_weights(p, CLASSES, TEACHERS)
+    for i in range(len(CLASSES)):
+        approx(lam[i], cw.lambda_c[i], 1e-9)
+        for k in range(6):
+            approx(w[k][i], cw.w[k][i], 1e-9)
+    p.unlink()
+
+
+def test_kd_weights_columns_sum_to_one():
+    from adaptation.competence_weights import load_kd_weights
+    p = Path("/tmp/_kdw2.json"); _write_weights(p)
+    _, w = load_kd_weights(p, CLASSES, TEACHERS)
+    for i in range(len(CLASSES)):
+        approx(sum(w[k][i] for k in range(6)), 1.0, 1e-9)
+    p.unlink()
+
+
+def test_kd_weights_rejects_permuted_classes():
+    from adaptation.competence_weights import load_kd_weights
+    p = Path("/tmp/_kdw3.json"); _write_weights(p)
+    try:
+        load_kd_weights(p, [CLASSES[1], CLASSES[0]] + CLASSES[2:], TEACHERS)
+    except ValueError as e:
+        assert "class order mismatch" in str(e)
+        p.unlink(); return
+    raise AssertionError("permuted class order should raise")
+
+
+def test_kd_weights_rejects_unknown_teacher():
+    from adaptation.competence_weights import load_kd_weights
+    p = Path("/tmp/_kdw4.json"); _write_weights(p)
+    try:
+        load_kd_weights(p, CLASSES, TEACHERS + ["local_c9"])
+    except ValueError as e:
+        assert "local_c9" in str(e)
+        p.unlink(); return
+    raise AssertionError("unknown teacher should raise")
+
+
+def test_kd_weights_rejects_unrenormalized_subset():
+    """Dropping a teacher without renormalising breaks the probability property."""
+    from adaptation.competence_weights import load_kd_weights
+    p = Path("/tmp/_kdw5.json"); _write_weights(p)
+    try:
+        load_kd_weights(p, CLASSES, TEACHERS[:3])
+    except ValueError as e:
+        assert "sum to" in str(e)
+        p.unlink(); return
+    raise AssertionError("teacher subset without renormalisation should raise")
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0
