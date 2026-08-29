@@ -73,6 +73,10 @@ TEACHER_HP = {
     "warmup_epochs": 3.0,
     "seed": 0,
     "deterministic": True,
+    # Pinned, not left to Ultralytics' runtime check: an AMP probe that resolves
+    # differently on different nodes would desynchronise the six teachers, and
+    # comparability across rows is the whole point of the competence matrix.
+    "amp": True,
     # Augmentation pinned explicitly (Ultralytics defaults as of 8.4.x).
     "hsv_h": 0.015, "hsv_s": 0.7, "hsv_v": 0.4,
     "degrees": 0.0, "translate": 0.1, "scale": 0.5,
@@ -263,6 +267,9 @@ def main() -> None:
     ap.add_argument("--imgsz", type=int, default=TEACHER_HP["imgsz"])
     ap.add_argument("--clients", default="all",
                     help="Comma-separated client indices, or 'all'.")
+    ap.add_argument("--skip_existing", action="store_true",
+                    help="Skip clients whose frozen teacher already exists, so a "
+                         "resubmit after a crash keeps the teachers already trained.")
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -274,10 +281,24 @@ def main() -> None:
     cids = (list(range(NUM_CLIENTS)) if args.clients == "all"
             else [int(c) for c in args.clients.split(",")])
 
+    if args.skip_existing:
+        done = [c for c in cids if (out_dir / "teacher_bank" / f"local_c{c + 1}.pt").exists()]
+        if done:
+            print(f"[INFO] --skip_existing: already trained {[f'local_c{c + 1}.pt' for c in done]}")
+        cids = [c for c in cids if c not in done]
+        if not cids:
+            print("[INFO] All requested teachers already exist; nothing to train.")
+
     metas = [train_one(cid, data_dir, out_dir, args.device, args.workers,
                        args.epochs, args.imgsz) for cid in cids]
 
-    (out_dir / "teacher_bank" / "manifest.json").write_text(json.dumps({
+    manifest_path = out_dir / "teacher_bank" / "manifest.json"
+    if manifest_path.exists():
+        prev = json.loads(manifest_path.read_text()).get("teachers", [])
+        trained = {m["client"] for m in metas}
+        metas = [m for m in prev if m["client"] not in trained] + metas
+        metas.sort(key=lambda m: m["client"])
+    manifest_path.write_text(json.dumps({
         "num_classes": NUM_CLASSES,
         "checkpoint_source": "last.pt",
         "shared_hyperparameters": {**TEACHER_HP, "epochs": args.epochs, "imgsz": args.imgsz},
