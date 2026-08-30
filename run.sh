@@ -20,6 +20,8 @@ SEED=${5:-0}
 EXP_NAME=${6:-"disruption_neu6_${STRATEGY}_seed${SEED}"}
 NUM_CLIENTS=${7:-6}
 NUM_CLASSES=${8:-6}
+# Must match the teacher bank's imgsz for any KD run.
+IMGSZ=${9:-640}
 
 MU=0.01
 
@@ -66,7 +68,7 @@ mkdir -p "$LOG_DIR"
 # Note: #SBATCH --output/--error headers above use logs/fl_%j.out (Slurm scheduler logs).
 # Application-level logs go to $LOG_DIR/ below.
 
-echo "FL: ${NUM_CLIENTS} clients, ${NUM_CLASSES} classes, ${ROUNDS} rounds, data=${DATA_DIR}"
+echo "FL: ${NUM_CLIENTS} clients, ${NUM_CLASSES} classes, ${ROUNDS} rounds, imgsz=${IMGSZ}, data=${DATA_DIR}"
 
 SHAPLEY_LOG_DIR="${FL_DIR}/shapley_logs"
 python server.py --rounds $ROUNDS --strategy $STRATEGY --mu $MU --seed $SEED \
@@ -82,7 +84,7 @@ echo "Server is ready!"
 for ((i = 0; i < NUM_CLIENTS; i++)); do
     python client.py $i $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS \
         --num_classes $NUM_CLASSES --strategy $STRATEGY --data_dir $DATA_DIR \
-        --seed $SEED > "$LOG_DIR/client_${i}.log" 2>&1 &
+        --imgsz $IMGSZ --seed $SEED > "$LOG_DIR/client_${i}.log" 2>&1 &
 done
 
 wait

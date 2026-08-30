@@ -11,7 +11,7 @@ import copy
 
 
 class YOLOClient(fl.client.NumPyClient):
-    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 6, strategy: str = "fedavg", seed: int = 0):
+    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 6, strategy: str = "fedavg", seed: int = 0, imgsz: int = 640, warmup_epochs: float = 3.0):
         """Initializes a YOLO Model for client {cid}.
 
         Args:
@@ -28,6 +28,9 @@ class YOLOClient(fl.client.NumPyClient):
         self.data_dir = data_dir
         self.epochs = epochs
         self.num_classes = num_classes
+        self.imgsz = imgsz
+        # Warmup is applied on round 1 only -- see the note at the .train() call.
+        self.warmup_epochs = float(warmup_epochs)
         self.strategy = strategy
         self.seed = seed
         self.model = load_model(num_classes=num_classes)
@@ -132,10 +135,29 @@ class YOLOClient(fl.client.NumPyClient):
             self.model.overrides.setdefault("model", MODEL_PATH)
             
             # Train the updated model using the client's training set
+            # Ultralytics restarts its LR schedule on every .train() call, so a
+            # federated round re-enters warmup from scratch. Two details make that
+            # costly here:
+            #
+            #   nw = max(round(warmup_epochs * nb), 100)      <- a 100-ITERATION FLOOR
+            #   "all other lrs rise from 0.0 to lr0"          <- weights start at zero
+            #
+            # Every client has 3*nb < 100 (C1 is the largest at nb=21), so the floor
+            # always binds and warmup is 100 iterations for all six. At 1 epoch/round
+            # that is 7-22 iterations of a 100-iteration ramp -- clients trained at
+            # 4-11% of lr0 and never got near it. Even at 5 epochs/round, four of six
+            # clients still never exit warmup.
+            #
+            # The floor also means a SHORT warmup cannot be requested: anything above
+            # 0 costs at least 100 iterations, which is longer than most clients'
+            # entire round. So it is all or nothing, and from round 2 the right answer
+            # is nothing -- the model is the aggregated global, not a random init, and
+            # has no need to re-warm every round.
+            warmup = self.warmup_epochs if self.round == 1 else 0.0
             self.model.train(
                 data=get_dataset_yaml(self.data_dir),
                 epochs=self.epochs,
-                imgsz=480,
+                imgsz=self.imgsz,
                 batch=16,
                 workers=0,
                 verbose=False,
@@ -145,6 +167,7 @@ class YOLOClient(fl.client.NumPyClient):
                 name=f"client_{self.cid}",
                 amp=True,
                 seed=self.seed,
+                warmup_epochs=warmup,
             )
 
             params = get_parameters(self.model)
@@ -157,6 +180,7 @@ class YOLOClient(fl.client.NumPyClient):
                 val_metrics = val_model.val(
                     data=get_dataset_yaml(self.data_dir),
                     split="val",
+                    imgsz=self.imgsz,
                     verbose=False,
                     workers=0,
                     device=self.device,
@@ -203,6 +227,7 @@ class YOLOClient(fl.client.NumPyClient):
         metrics = val_model.val(
             data=get_dataset_yaml(self.data_dir),
             split="val",
+            imgsz=self.imgsz,
             verbose=False,
             workers=0, 
             device=self.device,
@@ -265,6 +290,15 @@ def main():
     parser.add_argument("server_host", type=str, default="localhost")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--num_classes", type=int, default=6)
+    parser.add_argument("--imgsz", type=int, default=640,
+                        help="Train/val image size. Must match the teacher bank's "
+                             "imgsz for any KD run -- teachers are re-run on the "
+                             "student's batches, so a mismatch evaluates every "
+                             "teacher off its training resolution.")
+    parser.add_argument("--warmup_epochs", type=float, default=3.0,
+                        help="Warmup for ROUND 1 only; rounds 2+ use 0. Ultralytics "
+                             "floors warmup at 100 iterations, which exceeds a whole "
+                             "round for most clients here.")
     parser.add_argument(
         "--strategy",
         choices=["adaptive", "fedawa", "fedavg", "fedprox"],
@@ -297,7 +331,10 @@ def main():
     data_dir = str(Path(f"{args.data_dir}/client_{args.cid}").resolve())
 
     # pre-initialize client fully before connecting
-    client = YOLOClient(args.cid, data_dir, out_dir=args.out_dir, epochs=args.epochs, num_classes=args.num_classes, strategy=args.strategy, seed=args.seed)
+    client = YOLOClient(args.cid, data_dir, out_dir=args.out_dir, epochs=args.epochs,
+                        num_classes=args.num_classes, strategy=args.strategy,
+                        seed=args.seed, imgsz=args.imgsz,
+                        warmup_epochs=args.warmup_epochs)
     print(f"[Client {args.cid}] ready, connecting to server...", flush=True)
     
     fl.client.start_numpy_client(
