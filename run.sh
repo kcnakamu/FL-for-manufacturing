@@ -6,6 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --time=12:00:00
 
 # Federated run. Client count and class count are parameters so the neu6
 # (6-client) and the original neu3 (3-client) partitions both run from here:
@@ -21,6 +22,16 @@ NUM_CLIENTS=${7:-6}
 NUM_CLASSES=${8:-6}
 
 MU=0.01
+
+# Ultralytics restarts its LR schedule every time .train() is called, and its
+# default warmup is 3 epochs. At EPOCHS=1 per round that means every round is
+# 100% warmup and the client never reaches lr0 -- a 40-round/1-epoch run scored
+# 0.359 while 7 rounds at 5 epochs reached 0.487 on FEWER total local epochs.
+# Keep EPOCHS well above the warmup length, or set warmup_epochs in client.py.
+if [ "$EPOCHS" -le 3 ]; then
+    echo "WARNING: EPOCHS=${EPOCHS} <= Ultralytics' 3-epoch warmup default."
+    echo "         Local training will spend all or most of each round in warmup."
+fi
 
 EXP_DIR="experiments/${EXP_NAME}"
 FL_DIR="${EXP_DIR}/fl"
