@@ -36,7 +36,7 @@ import yaml
 from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from model import MODEL_PATH, load_model, set_seed  # noqa: E402
+from model import LOCAL_TRAIN_HP, MODEL_PATH, load_model, set_seed  # noqa: E402
 
 NUM_CLASSES = 6
 NUM_CLIENTS = 6
@@ -60,29 +60,15 @@ EXPECTED_PER_CLASS = {
     "scratches": 224,  # one image dropped: carried a pitted_surface box
 }
 
-# Frozen hyperparameters -- identical for all six teachers.
+# Frozen hyperparameters -- identical for all six teachers. Optimization and
+# augmentation come from model.LOCAL_TRAIN_HP so the teachers and the federated
+# clients cannot drift apart; only the role-specific values are set here.
 TEACHER_HP = {
+    **LOCAL_TRAIN_HP,
     "epochs": 100,
     "imgsz": 640,
     "batch": 16,
-    "optimizer": "SGD",
-    "lr0": 0.01,
-    "lrf": 0.01,
-    "momentum": 0.937,
-    "weight_decay": 0.0005,
-    "warmup_epochs": 3.0,
     "seed": 0,
-    "deterministic": True,
-    # Pinned, not left to Ultralytics' runtime check: an AMP probe that resolves
-    # differently on different nodes would desynchronise the six teachers, and
-    # comparability across rows is the whole point of the competence matrix.
-    "amp": True,
-    # Augmentation pinned explicitly (Ultralytics defaults as of 8.4.x).
-    "hsv_h": 0.015, "hsv_s": 0.7, "hsv_v": 0.4,
-    "degrees": 0.0, "translate": 0.1, "scale": 0.5,
-    "shear": 0.0, "perspective": 0.0,
-    "flipud": 0.0, "fliplr": 0.5,
-    "mosaic": 1.0, "mixup": 0.0, "copy_paste": 0.0,
 }
 
 

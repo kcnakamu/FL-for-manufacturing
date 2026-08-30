@@ -6,6 +6,38 @@ from collections import OrderedDict
 
 MODEL_PATH = "yolov8n.pt"
 
+# Optimization + augmentation shared by EVERY local training run in this repo --
+# the standalone teacher bank and the federated clients alike.
+#
+# It lives here, in one place, because the two drifted apart once already and it
+# was invisible: the teachers pinned SGD at lr0=0.01 while the clients passed
+# nothing, so Ultralytics' optimizer="auto" silently resolved them to AdamW at
+# lr0=0.001 (its auto rule picks AdamW with lr = 0.002*5/(4+nc) whenever a run is
+# under 10k iterations, which every client round is). Teacher and student were
+# training under a different optimizer AND a 10x different learning rate, which
+# makes any comparison between them meaningless.
+#
+# Augmentation values are pinned rather than inherited so an Ultralytics upgrade
+# cannot desynchronise runs that must stay comparable.
+#
+# Excluded on purpose: epochs, imgsz, batch and seed, which legitimately differ
+# by role and are passed by the caller.
+LOCAL_TRAIN_HP = {
+    "optimizer": "SGD",
+    "lr0": 0.01,
+    "lrf": 0.01,
+    "momentum": 0.937,
+    "weight_decay": 0.0005,
+    "warmup_epochs": 3.0,
+    "deterministic": True,
+    "amp": True,
+    "hsv_h": 0.015, "hsv_s": 0.7, "hsv_v": 0.4,
+    "degrees": 0.0, "translate": 0.1, "scale": 0.5,
+    "shear": 0.0, "perspective": 0.0,
+    "flipud": 0.0, "fliplr": 0.5,
+    "mosaic": 1.0, "mixup": 0.0, "copy_paste": 0.0,
+}
+
 
 def set_seed(seed: int):
     """Seed Python, NumPy, and PyTorch RNGs for reproducible model init.

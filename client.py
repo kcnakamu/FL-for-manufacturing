@@ -1,6 +1,6 @@
 from pathlib import Path
 import flwr as fl
-from model import MODEL_PATH, load_model, get_parameters, set_parameters, set_seed
+from model import LOCAL_TRAIN_HP, MODEL_PATH, load_model, get_parameters, set_parameters, set_seed
 from data import get_dataset_yaml
 import torch
 import numpy as np
@@ -153,7 +153,13 @@ class YOLOClient(fl.client.NumPyClient):
             # entire round. So it is all or nothing, and from round 2 the right answer
             # is nothing -- the model is the aggregated global, not a random init, and
             # has no need to re-warm every round.
-            warmup = self.warmup_epochs if self.round == 1 else 0.0
+            # Optimization + augmentation come from model.LOCAL_TRAIN_HP, the same
+            # block the standalone teacher bank uses. Passing nothing here would
+            # hand the choice to Ultralytics' optimizer="auto", which resolves any
+            # run under 10k iterations to AdamW at lr0=0.001 -- a different
+            # optimizer and a 10x smaller LR than the teachers were trained with.
+            hp = dict(LOCAL_TRAIN_HP)
+            hp["warmup_epochs"] = self.warmup_epochs if self.round == 1 else 0.0
             self.model.train(
                 data=get_dataset_yaml(self.data_dir),
                 epochs=self.epochs,
@@ -165,9 +171,8 @@ class YOLOClient(fl.client.NumPyClient):
                 device=self.device,
                 project=str(self.base_dir / f"round_{self.round:02d}"),
                 name=f"client_{self.cid}",
-                amp=True,
                 seed=self.seed,
-                warmup_epochs=warmup,
+                **hp,
             )
 
             params = get_parameters(self.model)
