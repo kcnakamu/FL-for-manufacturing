@@ -34,9 +34,9 @@ def main() -> None:
     ap.add_argument("--clients", type=int, default=6)
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--num_classes", type=int, default=6)
-    ap.add_argument("--plateau_delta", type=float, default=0.005,
-                    help="Mean mAP50 gain per round below which the curve counts "
-                         "as flat (default: %(default)s)")
+    ap.add_argument("--peak_tol", type=float, default=0.010,
+                    help="A round within this of the peak counts as indistinguishable "
+                         "from it (default: %(default)s)")
     args = ap.parse_args()
 
     fl = Path(args.fl_dir)
@@ -54,6 +54,7 @@ def main() -> None:
           f"{'mAP50-95':>10s}   participation")
     print("-" * 74)
     curve: list[float] = []
+    curve95: list[float] = []
     prev = None
     for d in rds:
         rows = {}
@@ -80,29 +81,41 @@ def main() -> None:
         if avg50 == avg50:            # skip NaN
             curve.append(avg50)
             prev = avg50
+        if avg5095 == avg5095:
+            curve95.append(avg5095)
 
-    # Plateau: the disruption round t* wants a converged pre-disruption model, so
-    # that post-disruption change is attributable to the departure rather than to
-    # the model still climbing. Report where a 3-round mean improvement first
-    # drops below --plateau_delta.
-    if len(curve) >= 5:
-        win, t_star = 3, None
-        for i in range(win, len(curve)):
-            recent = (curve[i] - curve[i - win]) / win
-            if recent < args.plateau_delta:
-                t_star = i + 1          # rounds are 1-indexed
-                break
-        total_gain = curve[-1] - curve[0]
-        last_win = (curve[-1] - curve[-1 - win]) / win if len(curve) > win else float("nan")
-        print(f"\nconvergence: total gain {total_gain:+.4f}, "
-              f"mean gain over the last {win} rounds {last_win:+.4f}/round")
-        if t_star is None:
-            print(f"  STILL CLIMBING at round {len(curve)} "
-                  f"(never fell below {args.plateau_delta}/round) -- "
-                  f"consider more rounds before fixing t*.")
+    # Choosing t*.
+    #
+    # A first-crossing rule on the raw curve ("first round whose 3-round mean gain
+    # drops below X") is fragile: FedAvg curves oscillate, so one dip trips it well
+    # before the model has actually stopped improving. Report the peak and the
+    # earliest round statistically indistinguishable from it instead -- that is the
+    # cheapest round that is as good as the best one, which is what t* wants.
+    def summarize(name: str, series: list[float]) -> None:
+        if len(series) < 5:
+            return
+        peak = max(series)
+        peak_r = series.index(peak) + 1
+        earliest = next(i + 1 for i, v in enumerate(series) if v >= peak - args.peak_tol)
+        tail = series[-5:]
+        tail_mean = sum(tail) / len(tail)
+        print(f"\n{name}: peak {peak:.4f} @ round {peak_r}; "
+              f"earliest within {args.peak_tol} of peak = round {earliest}")
+        drop = peak - tail_mean
+        if drop > args.peak_tol:
+            print(f"  DECLINING: last-5 mean {tail_mean:.4f} sits {drop:.4f} below the "
+                  f"peak -- later rounds are not helping and may be degrading it.")
+        elif peak_r >= len(series) - 2:
+            print(f"  still improving at the end -- consider more rounds before fixing t*.")
         else:
-            print(f"  plateau reached around round {t_star} "
-                  f"(< {args.plateau_delta}/round) -- a reasonable t* candidate.")
+            print(f"  plateaued: last-5 mean {tail_mean:.4f}, within {args.peak_tol} of peak.")
+
+    if len(curve) >= 5:
+        print(f"\nconvergence: total gain {curve[-1] - curve[0]:+.4f} over {len(curve)} rounds")
+        summarize("mAP50   ", curve)
+        summarize("mAP50-95", curve95)
+        print("\n  t* candidate: the earliest round at which BOTH metrics are within "
+              f"{args.peak_tol} of their peak.")
 
     # Final checkpoints
     print("\nfinal checkpoints:")
