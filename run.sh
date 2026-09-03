@@ -46,6 +46,16 @@ module load miniforge
 VENV="${FL_VENV:-${SLURM_SUBMIT_DIR:-$(pwd)}/.venv}"
 source "$VENV/bin/activate"
 
+# Must be exported BEFORE the process initializes CUDA. Ultralytics sets this
+# inside its own init_seeds, which runs in _setup_train -- by then load_model()
+# has already created the CUDA context and the variable has no effect. Setting
+# it here is a necessary condition for deterministic cuBLAS, though not a
+# sufficient one for reproducible runs: Ultralytics calls
+# use_deterministic_algorithms(True, warn_only=True), so any op lacking a
+# deterministic kernel still runs nondeterministically, and in a federated loop
+# those differences compound across rounds.
+export CUBLAS_WORKSPACE_CONFIG=":4096:8"
+
 # Fail early rather than after the server is up: a missing client dir would
 # otherwise leave the server waiting forever for a client that cannot start.
 for ((i = 0; i < NUM_CLIENTS; i++)); do
