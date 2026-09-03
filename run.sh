@@ -63,6 +63,18 @@ python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
 SERVER_HOST=$(hostname)
 
+# Unique port per job. Concurrent runs frequently share a node, and with a fixed
+# port only one server binds while EVERY client from every co-located job
+# connects to it -- the surviving server then aggregates across runs. Each job's
+# clients still write metrics to their own directory, so participation looks
+# correct and only the model is wrong.
+if [ -n "$SLURM_JOB_ID" ]; then
+    PORT=$(( 20000 + SLURM_JOB_ID % 30000 ))
+else
+    PORT=$(( 20000 + $$ % 30000 ))
+fi
+echo "Server port: ${PORT}"
+
 mkdir -p "$LOG_DIR"
 
 # Note: #SBATCH --output/--error headers above use logs/fl_%j.out (Slurm scheduler logs).
@@ -72,19 +84,35 @@ echo "FL: ${NUM_CLIENTS} clients, ${NUM_CLASSES} classes, ${ROUNDS} rounds, imgs
 
 SHAPLEY_LOG_DIR="${FL_DIR}/shapley_logs"
 python server.py --rounds $ROUNDS --strategy $STRATEGY --mu $MU --seed $SEED \
-    --num_classes $NUM_CLASSES --num_clients $NUM_CLIENTS \
+    --num_classes $NUM_CLASSES --num_clients $NUM_CLIENTS --port $PORT \
     --log_dir "$SHAPLEY_LOG_DIR" > "$LOG_DIR/server.log" 2>&1 &
+SERVER_PID=$!
 
 echo "Waiting for server to start..."
+# Bounded: a server that dies (port already bound, bad args) would otherwise
+# leave this loop spinning until the job hits its wall clock.
+WAITED=0
 until grep -q "gRPC server running" "$LOG_DIR/server.log" 2>/dev/null; do
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "ERROR: server exited before it was ready. Last lines:"
+        tail -20 "$LOG_DIR/server.log"
+        exit 1
+    fi
+    if [ "$WAITED" -ge 300 ]; then
+        echo "ERROR: server not ready after ${WAITED}s. Last lines:"
+        tail -20 "$LOG_DIR/server.log"
+        kill "$SERVER_PID" 2>/dev/null
+        exit 1
+    fi
     sleep 1
+    WAITED=$((WAITED + 1))
 done
 echo "Server is ready!"
 
 for ((i = 0; i < NUM_CLIENTS; i++)); do
     python client.py $i $SERVER_HOST --out_dir "$FL_DIR" --epochs $EPOCHS \
         --num_classes $NUM_CLASSES --strategy $STRATEGY --data_dir $DATA_DIR \
-        --imgsz $IMGSZ --seed $SEED > "$LOG_DIR/client_${i}.log" 2>&1 &
+        --imgsz $IMGSZ --port $PORT --seed $SEED > "$LOG_DIR/client_${i}.log" 2>&1 &
 done
 
 wait

@@ -17,6 +17,11 @@ def weighted_average(metrics):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--port", type=int, default=8080,
+                        help="gRPC port. MUST be unique per concurrent run: if two "
+                             "jobs land on the same node and share a port, only one "
+                             "server binds and every client from BOTH jobs connects "
+                             "to it, silently aggregating across runs.")
     parser.add_argument("--num_classes", type=int, default=6)
     parser.add_argument("--num_clients", type=int, default=6,
                         help="Clients required before a round starts. Must equal "
@@ -65,7 +70,7 @@ def main():
         evaluate_metrics_aggregation_fn=weighted_average,
     )
 
-    print(f"Waiting for {args.num_clients} clients per round")
+    print(f"Waiting for {args.num_clients} clients per round on port {args.port}")
     print(f"Setting strategy: {args.strategy}")
     strategy = build_strategy(
         args.strategy, shared_kwargs,
@@ -82,7 +87,7 @@ def main():
 
     print("Starting server")
     fl.server.start_server(
-        server_address="0.0.0.0:8080",
+        server_address=f"0.0.0.0:{args.port}",
         strategy=strategy,
         config=fl.server.ServerConfig(num_rounds=args.rounds),
     )

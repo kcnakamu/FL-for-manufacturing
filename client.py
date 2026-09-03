@@ -293,6 +293,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("cid", type=str)
     parser.add_argument("server_host", type=str, default="localhost")
+    parser.add_argument("--port", type=int, default=8080,
+                        help="Must match the server's --port.")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--num_classes", type=int, default=6)
     parser.add_argument("--imgsz", type=int, default=640,
@@ -343,7 +345,7 @@ def main():
     print(f"[Client {args.cid}] ready, connecting to server...", flush=True)
     
     fl.client.start_numpy_client(
-        server_address=f"{args.server_host}:8080",
+        server_address=f"{args.server_host}:{args.port}",
         client=client,
     )
 
