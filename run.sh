@@ -6,7 +6,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=12:00:00
+# No --time here: mit_normal_gpu rejects the wall clock this asked for, so the
+# partition default applies. A 30-round run has been killed by that default
+# before -- if a run dies mid-round with no Python traceback, check
+# `sacct -j <id> -o State,Elapsed,Timelimit` and pass a limit on the command
+# line instead: sbatch --time=<hh:mm:ss> run.sh ...
 
 # Federated run. Client count and class count are parameters so the neu6
 # (6-client) and the original neu3 (3-client) partitions both run from here:
