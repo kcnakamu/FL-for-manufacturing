@@ -15,6 +15,9 @@ split by where in the network the movement is, so the two can be distinguished.
 Usage:
     python scripts/diagnose_plateau.py experiments/fedavg_v4_seed1/fl
     python scripts/diagnose_plateau.py experiments/fedavg_v4_seed1/fl --compare experiments/fedavg_v4_seed0/fl
+
+The global snapshots are read from <fl_dir>/shapley_logs/globals (where run.sh
+puts them); pass --log_dir if they live somewhere else.
 """
 
 from __future__ import annotations
@@ -101,10 +104,29 @@ def map_curve(fl_dir: Path, clients: int) -> dict[int, float]:
     return out
 
 
-def analyze(fl_dir: Path, clients: int, num_classes: int, detect_idx: int):
-    gdir = fl_dir / "globals"
-    if not gdir.is_dir():
-        raise SystemExit(f"no globals/ under {fl_dir} -- was the Shapley logger on?")
+def globals_dir(fl_dir: Path, override: str | None) -> Path:
+    """Locate the Shapley logger's globals/.
+
+    run.sh points the server at ${FL_DIR}/shapley_logs, so the snapshots land one
+    level below the run dir rather than beside the round_XX dirs.
+    """
+    if override:
+        d = Path(override)
+        return d / "globals" if (d / "globals").is_dir() else d
+    for cand in (fl_dir / "shapley_logs" / "globals", fl_dir / "globals"):
+        if cand.is_dir():
+            return cand
+    found = sorted(str(p.parent) for p in fl_dir.glob("**/globals/global_round_*.npz"))
+    hint = f"\nfound global snapshots under: {found[0]}" if found else ""
+    raise SystemExit(
+        f"no globals/ under {fl_dir}/shapley_logs or {fl_dir}"
+        f" -- was the Shapley logger on?{hint}"
+    )
+
+
+def analyze(fl_dir: Path, clients: int, num_classes: int, detect_idx: int,
+            log_dir: str | None = None):
+    gdir = globals_dir(fl_dir, log_dir)
     rounds = sorted(int(p.stem.split("_")[-1]) for p in gdir.glob("global_round_*.npz"))
     if len(rounds) < 2:
         raise SystemExit(f"need at least 2 global snapshots, found {len(rounds)}")
@@ -153,12 +175,17 @@ def main() -> None:
     ap.add_argument("--num_classes", type=int, default=6)
     ap.add_argument("--detect_idx", type=int, default=22,
                     help="index of the Detect module in model.model (YOLOv8n: %(default)s)")
+    ap.add_argument("--log_dir", help="Shapley log dir, if it is not "
+                                      "<fl_dir>/shapley_logs")
+    ap.add_argument("--compare_log_dir", help="same, for --compare")
     args = ap.parse_args()
 
-    a = analyze(Path(args.fl_dir), args.clients, args.num_classes, args.detect_idx)
+    a = analyze(Path(args.fl_dir), args.clients, args.num_classes, args.detect_idx,
+                args.log_dir)
     if args.compare:
         print()
-        b = analyze(Path(args.compare), args.clients, args.num_classes, args.detect_idx)
+        b = analyze(Path(args.compare), args.clients, args.num_classes, args.detect_idx,
+                    args.compare_log_dir)
         # Compare the tails, where a stalled run and a converging one diverge.
         tail = min(10, len(a), len(b))
         ma = sum(a[-tail:]) / tail
