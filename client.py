@@ -1,6 +1,7 @@
 from pathlib import Path
 import flwr as fl
-from model import LOCAL_TRAIN_HP, MODEL_PATH, load_model, get_parameters, set_parameters, set_seed
+from model import (LOCAL_TRAIN_HP, MODEL_PATH, load_model, get_parameters,
+                   parameters_from_state, set_parameters, set_seed)
 from data import get_dataset_yaml
 import torch
 import numpy as np
@@ -43,6 +44,12 @@ class YOLOClient(fl.client.NumPyClient):
         self._global_snapshot = None
         self.model.add_callback("on_train_start", self._verify_global_loaded_hook)
 
+        # End-of-round weights captured straight off the trainer, in fp32.
+        # This is what gets federated -- NOT get_parameters(self.model). See
+        # _capture_final_weights_hook.
+        self._final_state = None
+        self.model.add_callback("on_train_end", self._capture_final_weights_hook)
+
         self.base_dir = Path(out_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         print(f"[Client {self.cid}] Output dir: {self.base_dir}")
@@ -79,6 +86,54 @@ class YOLOClient(fl.client.NumPyClient):
 
         net.loss = loss
         print(f"[Client {self.cid}] FedProx active (mu={mu})")
+
+    def _capture_final_weights_hook(self, trainer):
+        """Snapshot the trainer's fp32 end-of-training weights before .train() returns.
+
+        WHY THIS EXISTS -- this was the plateau bug.
+
+        When YOLO.train() returns it overwrites model.model with a checkpoint
+        reloaded from disk, preferring `best.pt`: the epoch whose fitness
+        (0.1*mAP50 + 0.9*mAP50-95) scored highest on the CLIENT'S OWN val split.
+        So `get_parameters(self.model)` after training federated the best epoch,
+        not the trained model. Measured over experiments/fedavg_v4_seed*, epoch 1
+        of 5 won that contest 59% (seed0) to 89% (seed1) of all client-rounds,
+        and the epoch-1 share rank-orders the runs' final mAP exactly.
+
+        That turns a federated round into a short, deterministic map
+        G -> best_c(G): same global in, same client weights out. Six such maps
+        aggregated by FedAvg settle onto a fixed point where the clients' updates
+        cancel. In fedavg_v4_seed1 rounds 24-26 every client still moved 6.43e-03
+        away from the global it was handed -- to the SAME place each round, within
+        1e-06 -- while the aggregate moved 6e-07. The run was not converged; it was
+        pinned at the weighted centroid of six disagreeing client optima, and the
+        ~0.63 per-round contraction seen in scripts/diagnose_plateau.py is that
+        map's contraction factor. Aggregating `last.pt` over those same frozen
+        rounds instead gives steps of 2.2e-02 to 3.1e-02 -- larger than the
+        healthy seed0 run ever took.
+
+        Ultralytics also fp16-quantizes on the way to disk (save_model writes
+        `"ema": deepcopy(...).half()`), so the disk round-trip threw away ~3
+        decimal digits of every weight, every round, on top of the above.
+        Reading trainer.ema.ema in memory dodges both: it is the same tensor
+        last.pt is built from (utils/torch_utils.py: "FP32 EMA"), before the cast.
+        """
+        try:
+            ema = getattr(trainer, "ema", None)
+            src = getattr(ema, "ema", None) if ema is not None else None
+            using_ema = src is not None
+            if src is None:
+                src = trainer.model  # EMA disabled -- fall back to raw weights
+            self._final_state = {
+                k: v.detach().cpu().float().clone()
+                for k, v in src.state_dict().items()
+            }
+            print(f"[Client {self.cid}] Round {self.round} on_train_end: captured "
+                  f"{len(self._final_state)} fp32 tensors from "
+                  f"{'trainer.ema.ema' if using_ema else 'trainer.model'}")
+        except Exception as e:
+            self._final_state = None
+            print(f"[Client {self.cid}] on_train_end capture failed: {e}")
 
     def _verify_global_loaded_hook(self, trainer):
         """Confirm train() starts from the GLOBAL aggregated weights set in fit().
@@ -133,6 +188,9 @@ class YOLOClient(fl.client.NumPyClient):
 
             run_dir = self._run_dir()
             self.model.overrides.setdefault("model", MODEL_PATH)
+            # Cleared so a silently-skipped on_train_end can't federate last
+            # round's weights; fit() checks it below.
+            self._final_state = None
             
             # Train the updated model using the client's training set
             # Ultralytics restarts its LR schedule on every .train() call, so a
@@ -175,7 +233,24 @@ class YOLOClient(fl.client.NumPyClient):
                 **hp,
             )
 
-            params = get_parameters(self.model)
+            # Federate the trainer's end-of-round fp32 weights, NOT
+            # get_parameters(self.model) -- .train() has just replaced
+            # self.model with the fp16 `best.pt` epoch checkpoint, which froze
+            # FedAvg on a fixed point (see _capture_final_weights_hook).
+            if self._final_state is not None:
+                params = parameters_from_state(self.model, self._final_state)
+                drift = sum(
+                    float(np.abs(p.astype(np.float64) - g.astype(np.float64)).sum())
+                    for p, g in zip(params, get_parameters(self.model))
+                )
+                print(f"[Client {self.cid}] Round {self.round} federating trainer "
+                      f"weights | L1 vs the best.pt Ultralytics reloaded = {drift:.6e}")
+            else:
+                params = get_parameters(self.model)
+                print(f"[Client {self.cid}] WARNING: on_train_end never fired; "
+                      f"falling back to the reloaded best.pt checkpoint. This is "
+                      f"the configuration that plateaued -- check Ultralytics "
+                      f"callback support before trusting this run.")
 
             # Get precision, recall, and map50 for adaptive weighting aggregation
             precision, recall, map50 = 0.0, 0.0, 0.0

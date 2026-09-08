@@ -77,6 +77,57 @@ def test_trainer_hooks_exist():
     assert "loss_names" in src
 
 
+def test_train_still_reloads_a_checkpoint_over_the_trained_model():
+    """Pins the behaviour client.py._capture_final_weights_hook exists to defeat.
+
+    YOLO.train() ends by replacing self.model with a checkpoint reloaded from
+    disk, preferring best.pt (the best-fitness EPOCH on the client's own val
+    split) over last.pt. Federating that instead of the trained weights froze
+    FedAvg on a fixed point -- see the hook's docstring for the measurements.
+
+    If this assertion ever fails, Ultralytics changed the reload and the
+    client-side capture may no longer be necessary; re-measure before removing it.
+    """
+    from ultralytics.engine.model import Model
+
+    src = inspect.getsource(Model.train)
+    assert "self.trainer.best" in src and "self.trainer.last" in src, (
+        "YOLO.train() no longer picks best/last after training"
+    )
+    assert "self.model, self.ckpt = load_checkpoint(ckpt)" in src, (
+        "YOLO.train() no longer overwrites self.model with a reloaded checkpoint"
+    )
+
+
+def test_trainer_exposes_fp32_ema_and_halves_it_on_save():
+    """The capture hook reads trainer.ema.ema because disk checkpoints are fp16.
+
+    save_model() writes `deepcopy(...).half()`, so every disk round-trip costs
+    ~3 decimal digits on every weight. trainer.ema.ema is the same tensor in
+    fp32, before the cast.
+    """
+    from ultralytics.engine.trainer import BaseTrainer
+    from ultralytics.nn.tasks import DetectionModel
+    from ultralytics.utils.torch_utils import ModelEMA
+
+    ema = ModelEMA(DetectionModel("yolov8n.yaml", nc=3, verbose=False))
+    assert hasattr(ema, "ema"), "ModelEMA no longer exposes .ema"
+    dtypes = {v.dtype for v in ema.ema.state_dict().values() if v.dtype.is_floating_point}
+    assert dtypes == {torch.float32}, f"ModelEMA.ema is no longer fp32: {dtypes}"
+
+    save_src = inspect.getsource(BaseTrainer.save_model)
+    assert ".half()" in save_src, (
+        "save_model no longer casts to fp16 -- the disk round-trip may now be "
+        "lossless, but keep capturing in memory unless re-measured"
+    )
+    # on_train_end is the hook the capture rides on, and it must fire after the
+    # last EMA update so the snapshot is the end-of-round model.
+    train_src = inspect.getsource(BaseTrainer._do_train)
+    assert 'self.run_callbacks("on_train_end")' in train_src, (
+        "on_train_end no longer fires at the end of _do_train"
+    )
+
+
 def test_kd_criterion_composes_with_real_loss():
     """End-to-end on CPU: KDDetectionLoss over a real tiny model + fake batch."""
     from ultralytics.nn.tasks import DetectionModel

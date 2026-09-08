@@ -139,6 +139,33 @@ def get_parameters(model):
     keys = _state_keys(model)
     return [state[k].detach().cpu().numpy().copy() for k in keys]
 
+def parameters_from_state(model, state):
+    """Order an external state_dict into the canonical _state_keys() sequence.
+
+    Exists because YOLO.train() REPLACES model.model with a checkpoint reloaded
+    from disk when it returns (ultralytics/engine/model.py, "Update model and cfg
+    after training"):
+
+        ckpt = self.trainer.best if self.trainer.best.exists() else self.trainer.last
+        self.model, self.ckpt = load_checkpoint(ckpt)
+
+    so get_parameters(model) after .train() federates `best.pt` -- the
+    highest-fitness EPOCH as scored on the client's own tiny non-IID val split,
+    and fp16-quantized on the way to disk (save_model writes
+    `deepcopy(...).half()`). Neither is what FedAvg is supposed to ship. Pass the
+    trainer's in-memory fp32 end-of-training weights through here instead; see
+    YOLOClient._capture_final_weights_hook for why that matters.
+    """
+    keys = _state_keys(model)
+    missing = [k for k in keys if k not in state]
+    if missing:
+        raise KeyError(
+            f"Captured trainer state is missing {len(missing)} tensor(s) expected by "
+            f"the model, e.g. {missing[:3]}. Refusing to federate a partial update."
+        )
+    return [state[k].detach().cpu().float().numpy().copy() for k in keys]
+
+
 def set_parameters(model, parameters):
     """Load global weights (list of numpy arrays in _state_keys() order) into the model."""
     current_state = model.model.state_dict()
