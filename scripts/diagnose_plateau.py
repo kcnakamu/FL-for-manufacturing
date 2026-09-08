@@ -26,9 +26,13 @@ import argparse
 import json
 import math
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
+
+# Run from anywhere: model.py lives at the repo root, two levels up from here.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 # YOLOv8 puts the Detect module last. Its cv3 branch produces the class logits
