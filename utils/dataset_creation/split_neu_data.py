@@ -114,9 +114,69 @@ NEU6_PRESET = {
     "expected_pool_exclusions": {"scratches": 1},
 }
 
+# 6-class / 6-client partition, monopolising SCRATCHES instead of pitted_surface.
+#
+# Same experiment as neu6, with the difficulty of the monopolised class removed
+# as a confound. The KD question is whether a competence-weighted teacher bank
+# can restore a departed client's knowledge -- but under neu6 the monopolised
+# class is one nobody can learn well: pitted_surface's best teacher reaches only
+# AP50 0.392 across seeds, against 0.841 for scratches and 0.938 for patches
+# (experiments/competence_across_seeds). A ceiling that low compresses the whole
+# effect into the seed-to-seed noise band (sigma 0.03-0.07), so a null result
+# would be unreadable: irrecoverable knowledge and an unlearnable class look
+# identical.
+#
+# Scratches is the ONLY substitute available. Exclusivity requires that no image
+# outside the class's own source folder carries a box of it, since every such
+# image has to be dropped from the pool; measured over NEU-DET's annotations
+# that count is 0 for crazing, rolled-in_scale and scratches, 1 for
+# pitted_surface, but 42 for patches and 82 for inclusion -- so the two easiest
+# classes cannot be monopolised without gutting the 225-per-class balance, and
+# crazing (0.298) and rolled-in_scale (0.406) are no better than what we have.
+#
+# The counts below are a straight role SWAP between scratches and
+# pitted_surface, so every client keeps its size and its role and only the
+# identity of the monopolised class changes:
+#
+#     client totals   neu6   335 344 205 140 225 100
+#                     neu6s  335 344 205 140 225 101
+#
+# That keeps the two conditions comparable -- a difference between them is
+# attributable to class difficulty rather than to a redesigned partition.
+#
+# expected_pool_exclusions is empty, unlike neu6: the single dropped image there
+# was a scratches image carrying a stray pitted_surface box, which only mattered
+# while pitted_surface had to stay exclusive. Nothing outside the scratches
+# folder carries a scratches box, so the full 225 survive.
+NEU6S_PRESET = {
+    **NEU6_PRESET,
+    "client_labels": [
+        "C1 generalist",
+        "C2 generalist",
+        "C3 partial specialist",
+        "C4 partial specialist",
+        "C5 exclusive owner (scratches)",
+        "C6 redundancy control",
+    ],
+    "train_per_client": {
+        #                    C1   C2   C3   C4   C5  C6
+        "crazing":         [ 50,  40,   0, 110,   0, 25],
+        "inclusion":       [ 60, 110,   0,  30,   0, 25],
+        "patches":         [ 90, 110,   0,   0,   0, 25],
+        # Takes over the spread scratches held under neu6; C6 absorbs the one
+        # image that no longer has to be dropped from the pool.
+        "pitted_surface":  [ 85,  84,  30,   0,   0, 26],
+        "rolled-in_scale": [ 50,   0, 175,   0,   0,  0],
+        "scratches":       [  0,   0,   0,   0, 225,  0],
+    },
+    "exclusive": {"scratches": 4},
+    "expected_pool_exclusions": {},
+}
+
 SPLIT_PRESETS = {
     "neu3": NEU3_PRESET,
     "neu6": NEU6_PRESET,
+    "neu6s": NEU6S_PRESET,
 }
 
 DEFAULT_PRESET = "neu3"
