@@ -15,17 +15,22 @@
 # the >=2 seeds the variance-scaled KD weights require can be produced without
 # editing this file:
 #
-#   sbatch run_teachers.sh data/neu6_data  experiments/teacher_bank            0
-#   sbatch run_teachers.sh data/neu6s_data experiments/teacher_bank_neu6s_seed0 0
-#   sbatch run_teachers.sh data/neu6s_data experiments/teacher_bank_neu6s_seed1 1
+#   sbatch run_teachers.sh data/neu6_data  experiments/teacher_bank             0 neu6
+#   sbatch run_teachers.sh data/neu6s_data experiments/teacher_bank_neu6s_seed0 0 neu6s
+#   sbatch run_teachers.sh data/neu6s_data experiments/teacher_bank_neu6s_seed1 1 neu6s
+#
+# PRESET must name the split preset DATA_DIR was generated with: the teacher
+# preflight derives its expected per-client and per-class image counts from it,
+# so a wrong name is caught rather than silently training on the wrong partition.
 #
 # Each seed writes its own OUT_DIR. Aggregate them afterwards with:
 #   python scripts/aggregate_competence.py <out>/competence/competence_matrix.json ...
 DATA_DIR=${1:-data/neu6_data}
 OUT_DIR=${2:-experiments/teacher_bank}
 SEED=${3:-0}
-EPOCHS=${4:-100}
-IMGSZ=${5:-640}
+PRESET=${4:-neu6}
+EPOCHS=${5:-100}
+IMGSZ=${6:-640}
 
 # The competence matrix must be measured on the SAME partition the teachers were
 # trained on -- it cross-checks every score against that partition's per-class
@@ -41,10 +46,10 @@ source "${FL_VENV:-${SLURM_SUBMIT_DIR:-$(pwd)}/.venv}/bin/activate"
 # training loop races across concurrent jobs.
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
-echo "[run_teachers] data=${DATA_DIR} out=${OUT_DIR} seed=${SEED} epochs=${EPOCHS} imgsz=${IMGSZ}"
+echo "[run_teachers] data=${DATA_DIR} out=${OUT_DIR} seed=${SEED} preset=${PRESET} epochs=${EPOCHS} imgsz=${IMGSZ}"
 
 python scripts/train_local_teachers.py \
-    --data_dir "${DATA_DIR}" --out_dir "${OUT_DIR}" \
+    --data_dir "${DATA_DIR}" --out_dir "${OUT_DIR}" --preset "${PRESET}" \
     --epochs "${EPOCHS}" --imgsz "${IMGSZ}" --seed "${SEED}" \
     --device 0 --workers 4 --skip_existing
 

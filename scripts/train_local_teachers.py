@@ -37,6 +37,7 @@ from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model import LOCAL_TRAIN_HP, MODEL_PATH, load_model, set_seed  # noqa: E402
+from utils.dataset_creation.split_neu_data import SPLIT_PRESETS  # noqa: E402
 
 NUM_CLASSES = 6
 NUM_CLIENTS = 6
@@ -51,14 +52,40 @@ CLIENT_LABELS = {
     5: "C6 redundancy control",
 }
 
-# Expected allocation, asserted before training so a silently regenerated or
-# half-copied dataset cannot produce an incomparable teacher bank.
-EXPECTED_TRAIN_IMAGES = {0: 335, 1: 344, 2: 205, 3: 140, 4: 225, 5: 100}
-EXPECTED_PER_CLASS = {
-    "crazing": 225, "inclusion": 225, "patches": 225,
-    "pitted_surface": 225, "rolled-in_scale": 225,
-    "scratches": 224,  # one image dropped: carried a pitted_surface box
-}
+DEFAULT_PRESET = "neu6"
+
+
+def load_split_preset(name: str) -> dict:
+    """The split preset this bank must match (see utils/dataset_creation)."""
+    if name not in SPLIT_PRESETS:
+        raise ValueError(f"Unknown split preset {name!r}. Known: {sorted(SPLIT_PRESETS)}")
+    return SPLIT_PRESETS[name]
+
+
+def expected_allocation(preset: dict):
+    """Per-client and per-class training-image counts implied by a split preset.
+
+    DERIVED, not hardcoded. These counts already exist in the preset, and
+    duplicating neu6's numbers here meant the preflight guard only recognised
+    neu6: it rejected the neu6s partition as corrupt for the two differences
+    that are its entire point (client_5 holds 101 images rather than 100, and
+    scratches keeps all 225 rather than 224, because neu6's single dropped image
+    was only dropped to protect pitted_surface's exclusivity).
+
+    The guard is still worth having -- it catches a half-copied or regenerated
+    dataset -- but it has to ask the preset what to expect.
+    """
+    train = preset["train_per_client"]
+    n_clients = len(next(iter(train.values())))
+    per_client = {i: sum(counts[i] for counts in train.values()) for i in range(n_clients)}
+
+    total = preset["train_per_class_total"]
+    exclusions = preset.get("expected_pool_exclusions", {})
+    per_class = {cls: total - exclusions.get(cls, 0) for cls in train}
+
+    n_val = (preset["val_per_class"] * len(preset["classes"])
+             if preset["val_mode"] == "centralized" else None)
+    return per_client, per_class, n_val
 
 # Frozen hyperparameters -- identical for all six teachers. Optimization and
 # augmentation come from model.LOCAL_TRAIN_HP so the teachers and the federated
@@ -72,10 +99,16 @@ TEACHER_HP = {
 }
 
 
-def preflight(data_dir: Path) -> None:
-    """Fail loudly if the partition on disk isn't the one the teachers assume."""
+def preflight(data_dir: Path, preset: dict) -> None:
+    """Fail loudly if the partition on disk isn't the one `preset` describes."""
     problems: list[str] = []
     grand: Counter = Counter()
+    expected_train, expected_per_class, expected_val = expected_allocation(preset)
+
+    if len(preset["classes"]) != NUM_CLASSES:
+        problems.append(f"preset has {len(preset['classes'])} classes, expected {NUM_CLASSES}")
+    if len(expected_train) != NUM_CLIENTS:
+        problems.append(f"preset has {len(expected_train)} clients, expected {NUM_CLIENTS}")
 
     for i in range(NUM_CLIENTS):
         cdir = data_dir / f"client_{i}"
@@ -89,13 +122,13 @@ def preflight(data_dir: Path) -> None:
             problems.append(f"client_{i}: data.yaml nc={cfg.get('nc')}, expected {NUM_CLASSES}")
 
         imgs = sorted((cdir / "images" / "train").glob("*.jpg"))
-        if len(imgs) != EXPECTED_TRAIN_IMAGES[i]:
+        if len(imgs) != expected_train[i]:
             problems.append(
-                f"client_{i}: {len(imgs)} train images, expected {EXPECTED_TRAIN_IMAGES[i]}"
+                f"client_{i}: {len(imgs)} train images, expected {expected_train[i]}"
             )
         grand.update(p.stem.rsplit("_", 1)[0] for p in imgs)
 
-    for cls, want in EXPECTED_PER_CLASS.items():
+    for cls, want in expected_per_class.items():
         if grand.get(cls, 0) != want:
             problems.append(f"class '{cls}': {grand.get(cls, 0)} training images, expected {want}")
 
@@ -104,8 +137,8 @@ def preflight(data_dir: Path) -> None:
         problems.append(f"missing centralized val set at {val_yaml}")
     else:
         n_val = len(list((data_dir / "val" / "images").glob("*.jpg")))
-        if n_val != 180:
-            problems.append(f"centralized val has {n_val} images, expected 180")
+        if expected_val is not None and n_val != expected_val:
+            problems.append(f"centralized val has {n_val} images, expected {expected_val}")
 
     if problems:
         raise ValueError(
@@ -248,6 +281,10 @@ def collect_curves(out_dir: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the six local teacher models.")
     ap.add_argument("--data_dir", default="data/neu6_data")
+    ap.add_argument("--preset", default=DEFAULT_PRESET, choices=sorted(SPLIT_PRESETS),
+                    help="Split preset the partition must match. The preflight guard "
+                         "derives its expected per-client and per-class counts from "
+                         "this, so it must name the preset --data_dir was built with.")
     ap.add_argument("--out_dir", default="experiments/teacher_bank")
     ap.add_argument("--device", default="", help="'0', 'cpu', 'mps'. Empty = auto.")
     ap.add_argument("--workers", type=int, default=0)
@@ -268,7 +305,13 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    preflight(data_dir)
+    preset = load_split_preset(args.preset)
+    # Manifest labels come from the preset too, so a neu6s bank is not recorded
+    # with neu6's client roles.
+    global CLIENT_LABELS
+    CLIENT_LABELS = dict(enumerate(preset["client_labels"]))
+    print(f"[preflight] checking {data_dir} against split preset '{args.preset}'")
+    preflight(data_dir, preset)
 
     # One bank = one seed. Mixing them silently would make the aggregator's
     # across-seed variance meaningless, so refuse rather than overwrite.
