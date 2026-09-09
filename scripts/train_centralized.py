@@ -46,6 +46,7 @@ import sys
 from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 from model import (  # noqa: E402
+    LOCAL_TRAIN_HP,
     apply_freeze as _apply_freeze,
     freeze_indices as _freeze_indices,
     load_model as _load_model,
@@ -118,13 +119,23 @@ def train(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    # Optimization + augmentation come from model.LOCAL_TRAIN_HP, the same block
+    # the teacher bank and the federated clients use. This run is the CENTRALIZED
+    # PARITY TARGET -- the number "federated + KD matches centralized" is measured
+    # against -- so it has to be the same recipe on pooled data, differing only in
+    # who holds the images. Pinning lr0/optimizer alone left the rest (lrf,
+    # momentum, weight_decay, warmup, amp, deterministic, every augmentation) on
+    # Ultralytics' defaults. Those happen to match LOCAL_TRAIN_HP today, so this
+    # changes nothing now -- but the point of pinning them in one place is that a
+    # library upgrade cannot silently desynchronise runs that must stay comparable,
+    # and the baseline was the one run still exposed to that.
+    hp = dict(LOCAL_TRAIN_HP)
+    hp["lr0"] = lr          # caller's --lr wins: staged fine-tunes run at 1e-3/1e-4
     results = model.train(
         data=data,
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
-        lr0=lr,
-        optimizer="SGD",
         workers=workers,
         device=device,
         project=str(out_path.resolve()),
@@ -133,6 +144,7 @@ def train(
         # the freeze must go through this arg — apply_freeze alone is undone.
         freeze=_freeze_indices(mode),
         seed=seed,
+        **hp,
     )
 
     summary = {
