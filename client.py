@@ -44,9 +44,9 @@ class YOLOClient(fl.client.NumPyClient):
         self._global_snapshot = None
         self.model.add_callback("on_train_start", self._verify_global_loaded_hook)
 
-        # End-of-round weights captured straight off the trainer, in fp32.
-        # This is what gets federated -- NOT get_parameters(self.model). See
-        # _capture_final_weights_hook.
+        # End-of-round weights captured straight off the trainer. This is what
+        # gets federated -- NOT get_parameters(self.model), which returns the
+        # best.pt epoch. See _capture_final_weights_hook.
         self._final_state = None
         self.model.add_callback("on_train_end", self._capture_final_weights_hook)
 
@@ -88,7 +88,7 @@ class YOLOClient(fl.client.NumPyClient):
         print(f"[Client {self.cid}] FedProx active (mu={mu})")
 
     def _capture_final_weights_hook(self, trainer):
-        """Snapshot the trainer's fp32 end-of-training weights before .train() returns.
+        """Snapshot the trainer's end-of-training weights before .train() returns.
 
         WHY THIS EXISTS -- this was the plateau bug.
 
@@ -112,11 +112,21 @@ class YOLOClient(fl.client.NumPyClient):
         rounds instead gives steps of 2.2e-02 to 3.1e-02 -- larger than the
         healthy seed0 run ever took.
 
-        Ultralytics also fp16-quantizes on the way to disk (save_model writes
-        `"ema": deepcopy(...).half()`), so the disk round-trip threw away ~3
-        decimal digits of every weight, every round, on top of the above.
-        Reading trainer.ema.ema in memory dodges both: it is the same tensor
-        last.pt is built from (utils/torch_utils.py: "FP32 EMA"), before the cast.
+        What this does NOT fix, measured on experiments/fedavg_v5_seed1: the
+        captured tensors come back bit-identical to last.pt's stored fp16
+        content, so no fp32 precision is recovered here. BaseValidator halves
+        the EMA IN PLACE on every epoch-end validation --
+
+            engine/validator.py:152   model = trainer.ema.ema or trainer.model
+            engine/validator.py:155   model = model.half() if self.args.half ...
+
+        -- and the model.float() at validator.py:250 restores the dtype, not the
+        bits. So trainer.ema.ema is already fp16-degraded once per epoch long
+        before on_train_end fires, and `half` is on whenever amp is on and we are
+        on GPU. Capturing trainer.model instead would be genuinely fp32, but that
+        federates the raw weights rather than the EMA -- a different call, not
+        made here. See the run-report notes for the val=False option, which would
+        skip the halving and the per-epoch validation cost together.
         """
         try:
             ema = getattr(trainer, "ema", None)
@@ -128,9 +138,12 @@ class YOLOClient(fl.client.NumPyClient):
                 k: v.detach().cpu().float().clone()
                 for k, v in src.state_dict().items()
             }
+            src_dtypes = {str(v.dtype) for v in src.state_dict().values()
+                          if v.dtype.is_floating_point}
             print(f"[Client {self.cid}] Round {self.round} on_train_end: captured "
-                  f"{len(self._final_state)} fp32 tensors from "
-                  f"{'trainer.ema.ema' if using_ema else 'trainer.model'}")
+                  f"{len(self._final_state)} tensors from "
+                  f"{'trainer.ema.ema' if using_ema else 'trainer.model'} "
+                  f"(source dtype {sorted(src_dtypes)})")
         except Exception as e:
             self._final_state = None
             print(f"[Client {self.cid}] on_train_end capture failed: {e}")

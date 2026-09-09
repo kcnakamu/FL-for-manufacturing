@@ -150,11 +150,12 @@ def parameters_from_state(model, state):
         self.model, self.ckpt = load_checkpoint(ckpt)
 
     so get_parameters(model) after .train() federates `best.pt` -- the
-    highest-fitness EPOCH as scored on the client's own tiny non-IID val split,
-    and fp16-quantized on the way to disk (save_model writes
-    `deepcopy(...).half()`). Neither is what FedAvg is supposed to ship. Pass the
-    trainer's in-memory fp32 end-of-training weights through here instead; see
-    YOLOClient._capture_final_weights_hook for why that matters.
+    highest-fitness EPOCH as scored on the client's own tiny non-IID val split.
+    That is not what FedAvg is supposed to ship. Pass the trainer's
+    end-of-training weights through here instead; see
+    YOLOClient._capture_final_weights_hook for why that matters, and for what
+    this does NOT fix (the weights are still fp16-degraded -- the validator
+    halves the EMA in place every epoch).
     """
     keys = _state_keys(model)
     missing = [k for k in keys if k not in state]

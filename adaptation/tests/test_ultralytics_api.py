@@ -99,27 +99,38 @@ def test_train_still_reloads_a_checkpoint_over_the_trained_model():
     )
 
 
-def test_trainer_exposes_fp32_ema_and_halves_it_on_save():
-    """The capture hook reads trainer.ema.ema because disk checkpoints are fp16.
+def test_validator_halves_the_trainer_ema_in_place():
+    """Pins WHY client.py's capture does not recover fp32, despite reading memory.
 
-    save_model() writes `deepcopy(...).half()`, so every disk round-trip costs
-    ~3 decimal digits on every weight. trainer.ema.ema is the same tensor in
-    fp32, before the cast.
+    BaseValidator takes trainer.ema.ema and calls .half() on it IN PLACE at every
+    epoch-end validation; the later .float() restores the dtype, not the bits. So
+    the EMA is fp16-degraded once per epoch, and capturing it at on_train_end
+    yields exactly last.pt's stored content (verified bit-for-bit on
+    experiments/fedavg_v5_seed1). If this assertion ever fails, Ultralytics
+    stopped halving in place and capturing the EMA becomes a real fp32 win --
+    re-measure before claiming it.
     """
     from ultralytics.engine.trainer import BaseTrainer
+    from ultralytics.engine.validator import BaseValidator
     from ultralytics.nn.tasks import DetectionModel
     from ultralytics.utils.torch_utils import ModelEMA
 
+    # A FRESH EMA is fp32 -- the degradation happens later, during validation.
     ema = ModelEMA(DetectionModel("yolov8n.yaml", nc=3, verbose=False))
     assert hasattr(ema, "ema"), "ModelEMA no longer exposes .ema"
     dtypes = {v.dtype for v in ema.ema.state_dict().values() if v.dtype.is_floating_point}
     assert dtypes == {torch.float32}, f"ModelEMA.ema is no longer fp32: {dtypes}"
 
-    save_src = inspect.getsource(BaseTrainer.save_model)
-    assert ".half()" in save_src, (
-        "save_model no longer casts to fp16 -- the disk round-trip may now be "
-        "lossless, but keep capturing in memory unless re-measured"
+    val_src = inspect.getsource(BaseValidator.__call__)
+    assert "trainer.ema.ema or trainer.model" in val_src, (
+        "BaseValidator no longer validates the trainer's EMA in place"
     )
+    assert "model.half() if self.args.half" in val_src, (
+        "BaseValidator no longer halves the EMA -- capturing it may now be fp32"
+    )
+
+    save_src = inspect.getsource(BaseTrainer.save_model)
+    assert ".half()" in save_src, "save_model no longer casts checkpoints to fp16"
     # on_train_end is the hook the capture rides on, and it must fire after the
     # last EMA update so the snapshot is the end-of-round model.
     train_src = inspect.getsource(BaseTrainer._do_train)
