@@ -24,9 +24,20 @@ from pathlib import Path
 import yaml
 
 
-def pool(partition: Path, out: Path, num_clients: int = 6) -> None:
+def pool(partition: Path, out: Path, num_clients: int = 6,
+         exclude: tuple[int, ...] = ()) -> None:
+    """Pool clients into one dataset; `exclude` drops client indices entirely.
+
+    Excluding is how the post-departure condition is built: the departed client's
+    DATA is gone from the pool, while its frozen teacher checkpoint survives in
+    the bank. Nothing else about the pool changes, so a KD run against this and a
+    run against the full pool differ only in the missing client.
+    """
     if not partition.is_dir():
         raise SystemExit(f"partition not found: {partition}")
+    keep = [c for c in range(num_clients) if c not in exclude]
+    if not keep:
+        raise SystemExit("every client excluded; nothing to pool")
 
     for split in ("train", "val", "test"):
         (out / "images" / split).mkdir(parents=True, exist_ok=True)
@@ -34,7 +45,7 @@ def pool(partition: Path, out: Path, num_clients: int = 6) -> None:
 
     # train: the union of every client's train split.
     seen: dict[str, str] = {}
-    for c in range(num_clients):
+    for c in keep:
         cdir = partition / f"client_{c}"
         if not cdir.is_dir():
             raise SystemExit(f"missing {cdir}")
@@ -74,7 +85,7 @@ def pool(partition: Path, out: Path, num_clients: int = 6) -> None:
     counts = {s: len(list((out / "images" / s).glob("*.jpg"))) for s in ("train", "val", "test")}
     client_total = sum(
         len(list((partition / f"client_{c}" / "images" / "train").glob("*.jpg")))
-        for c in range(num_clients)
+        for c in keep
     )
     if counts["train"] != client_total:
         raise SystemExit(f"pooled train {counts['train']} != sum of clients {client_total}")
@@ -88,7 +99,7 @@ def pool(partition: Path, out: Path, num_clients: int = 6) -> None:
         if overlap:
             raise SystemExit(f"{len(overlap)} pooled train images also in {split}")
 
-    print(f"[OK] pooled {counts['train']} train (= sum over {num_clients} clients), "
+    print(f"[OK] pooled {counts['train']} train (= sum over clients {keep}), "
           f"{counts['val']} val, {counts['test']} test -> {out}")
     print(f"[OK] labels match images in every split; no train/val or train/test overlap")
 
@@ -98,8 +109,11 @@ def main() -> None:
     ap.add_argument("--partition", required=True, help="e.g. data/neu6s_data")
     ap.add_argument("--out", required=True, help="e.g. data/neu6s_centralized")
     ap.add_argument("--num_clients", type=int, default=6)
+    ap.add_argument("--exclude", type=int, nargs="*", default=[],
+                    help="Client indices to drop from the pool, e.g. --exclude 4 "
+                         "to build the condition after client_4 departs.")
     a = ap.parse_args()
-    pool(Path(a.partition), Path(a.out), a.num_clients)
+    pool(Path(a.partition), Path(a.out), a.num_clients, tuple(a.exclude))
 
 
 if __name__ == "__main__":
