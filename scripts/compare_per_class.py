@@ -38,6 +38,9 @@ def main() -> None:
                     help="Checkpoints to compare; the first is the reference.")
     ap.add_argument("--data", required=True, help="Dataset YAML to evaluate against.")
     ap.add_argument("--split", default="val", choices=["val", "test"])
+    ap.add_argument("--metric", default="ap50", choices=["ap50", "precision", "recall"],
+                    help="ap50 (default), or precision/recall to tell a missed class "
+                         "apart from a hallucinated one.")
     ap.add_argument("--out_dir", default="experiments/analysis/per_class")
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--device", default="")
@@ -65,7 +68,9 @@ def main() -> None:
             out_dir=str((out_dir / "val_runs").resolve()), name=name,
             split=args.split,
         )
-        per_class = res["per_class_ap50"]
+        key = {"ap50": "per_class_ap50", "precision": "per_class_precision",
+               "recall": "per_class_recall"}[args.metric]
+        per_class = res[key]
         results[name] = {
             # Classes absent from ap_class_index were never scored -> 0.0.
             "per_class_ap50": {c: float(per_class.get(c, 0.0)) for c in class_names},
@@ -79,7 +84,7 @@ def main() -> None:
     w = max(len(c) for c in class_names) + 2
 
     print("\n" + "=" * 78)
-    print(f"PER-CLASS AP@50 on {data} [{args.split}]   reference = {ref}")
+    print(f"PER-CLASS {args.metric.upper()} on {data} [{args.split}]   reference = {ref}")
     print("=" * 78)
     header = f"{'class':{w}s}" + "".join(f"{n:>14s}" for n in names)
     header += "".join(f"{'d ' + n:>14s}" for n in names[1:])
@@ -97,7 +102,7 @@ def main() -> None:
         row += "".join(f"{results[n][key] - results[ref][key]:>+14.4f}" for n in names[1:])
         print(row)
 
-    out = out_dir / f"per_class_{args.split}.json"
+    out = out_dir / f"per_class_{args.metric}_{args.split}.json"
     out.write_text(json.dumps({
         "data": str(data), "split": args.split, "reference": ref,
         "class_names": class_names, "results": results,

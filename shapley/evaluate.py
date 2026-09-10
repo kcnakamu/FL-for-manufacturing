@@ -105,9 +105,19 @@ def evaluate_checkpoint(
         names = yaml.safe_load(fh)["names"]
     per_class = {str(names[int(c)]): float(metrics.box.ap50[i])
                  for i, c in enumerate(metrics.box.ap_class_index)}
+    # Precision and recall are indexed the same way. They separate a class that
+    # is being MISSED from one the model is hallucinating: an AP drop with
+    # recall held and precision collapsing is a false-positive problem, which is
+    # what distilling a teacher's spurious detections produces.
+    per_class_p = {str(names[int(c)]): float(metrics.box.p[i])
+                   for i, c in enumerate(metrics.box.ap_class_index)}
+    per_class_r = {str(names[int(c)]): float(metrics.box.r[i])
+                   for i, c in enumerate(metrics.box.ap_class_index)}
 
     return {
         "mAP50": float(metrics.box.map50),
         "mAP50-95": float(metrics.box.map),
         "per_class_ap50": per_class,
+        "per_class_precision": per_class_p,
+        "per_class_recall": per_class_r,
     }
