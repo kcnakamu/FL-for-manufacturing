@@ -25,7 +25,14 @@
 #   sbatch run_distill.sh nokd
 #   sbatch run_distill.sh uniform
 #   sbatch run_distill.sh competence
-ARM=${1:?usage: sbatch run_distill.sh {nokd|uniform|competence}}
+# Not ${1:?...}: a "}" inside that message closes the expansion early and the
+# remainder lands in the variable, which is how this first ran with ARM set
+# to "competence}".
+ARM=${1:-}
+if [ -z "$ARM" ]; then
+    echo "usage: sbatch run_distill.sh nokd|uniform|competence [epochs] [seed]"
+    exit 2
+fi
 EPOCHS=${2:-75}
 SEED=${3:-0}
 
