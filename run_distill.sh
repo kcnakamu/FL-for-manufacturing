@@ -22,9 +22,22 @@
 #   uniform     bank, no weights   uniform over teachers AND classes (competence-blind)
 #   competence  bank + kd_weights  variance-scaled routing at tau=3
 #
-#   sbatch run_distill.sh nokd
-#   sbatch run_distill.sh uniform
-#   sbatch run_distill.sh competence
+# teacher_conf is NOT optional in practice. Measured on real batches
+# (scripts/verify_kd_loss.py), the unmasked term averages over ~8400 anchors
+# where student and teacher already agree on background, so at lam=1 it is 1.84%
+# of the loss but only 0.03% of the GRADIENT -- the first ablation ran that way
+# and its three arms were mechanically the same run. Gating at 0.25 lifts the
+# gradient share to 5.5% at the same lam, and lam=10 with 0.25 reaches 36.8%.
+#
+# Note the mask is taken on the FUSED teacher probability, so the weighting
+# decides which anchors survive it: an anchor where only C5 fires at 0.9 fuses
+# to ~0.15 under uniform (dropped at a 0.25 gate) but ~0.9 under competence
+# routing. That is a real effect and a confound -- the arms then distill on
+# different anchor sets -- and it must be reported, not discovered later.
+#
+#   sbatch run_distill.sh nokd       75 0 10 0.25
+#   sbatch run_distill.sh uniform    75 0 10 0.25
+#   sbatch run_distill.sh competence 75 0 10 0.25
 # Not ${1:?...}: a "}" inside that message closes the expansion early and the
 # remainder lands in the variable, which is how this first ran with ARM set
 # to "competence}".
@@ -35,6 +48,8 @@ if [ -z "$ARM" ]; then
 fi
 EPOCHS=${2:-75}
 SEED=${3:-0}
+LAM=${4:-10.0}
+TCONF=${5:-0.25}
 
 STUDENT=experiments/pre_disruption_neu6s_seed0/fl/final_model/client_0_final.pt
 DATA=data/neu6s_survivors/data.yaml
@@ -43,12 +58,16 @@ KDW=experiments/competence_across_seeds_neu6s/kd_weights.json
 # Must equal the bank's training imgsz: teachers are re-run on the student's
 # batches, so a mismatch evaluates every teacher off its own resolution.
 IMGSZ=640
-OUT=experiments/kd_neu6s/${ARM}
+# Settings are in the path so runs at different lam/teacher_conf/seed cannot
+# silently overwrite each other -- the first ablation wrote to a bare arm name.
+OUT=experiments/kd_neu6s/${ARM}_lam${LAM}_tc${TCONF}_seed${SEED}
 
 case "$ARM" in
+  # lam=0 makes KD inert; teacher_conf is then irrelevant but stays passed so
+  # every arm walks an identical code path.
   nokd)       EXTRA="--lam 0.0" ;;
-  uniform)    EXTRA="--lam 1.0" ;;
-  competence) EXTRA="--lam 1.0 --kd_weights ${KDW}" ;;
+  uniform)    EXTRA="--lam ${LAM}" ;;
+  competence) EXTRA="--lam ${LAM} --kd_weights ${KDW}" ;;
   *) echo "unknown arm '${ARM}' (expected nokd|uniform|competence)"; exit 2 ;;
 esac
 
@@ -58,7 +77,7 @@ module load miniforge
 source "${FL_VENV:-${SLURM_SUBMIT_DIR:-$(pwd)}/.venv}/bin/activate"
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
-echo "[run_distill] arm=${ARM} epochs=${EPOCHS} seed=${SEED} -> ${OUT}"
+echo "[run_distill] arm=${ARM} epochs=${EPOCHS} seed=${SEED} lam=${LAM} teacher_conf=${TCONF} -> ${OUT}"
 
 python -m adaptation.distill_finetune \
     --weights "${STUDENT}" \
@@ -67,4 +86,5 @@ python -m adaptation.distill_finetune \
     --out_dir "${OUT}" \
     --mode neck_head --epochs "${EPOCHS}" --lr 1e-4 \
     --imgsz "${IMGSZ}" --batch 16 --seed "${SEED}" \
+    --teacher_conf "${TCONF}" \
     --device 0 ${EXTRA}
