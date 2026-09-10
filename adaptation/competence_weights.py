@@ -128,6 +128,8 @@ def derive_weights(
     competence: dict,
     tau: float = 3.0,
     min_competence: float = 0.0,
+    student: dict | None = None,
+    min_headroom: float = 0.0,
 ) -> CompetenceWeights:
     """Build (lambda_c, w[k][c]) from an aggregated competence matrix.
 
@@ -137,6 +139,20 @@ def derive_weights(
             routing, inf = uniform ensembling.
         min_competence: classes whose best teacher scores below this get
             lambda_c = 0 -- nobody knows them, so distilling them adds noise.
+        student: optional {class_name: AP50} for the model being distilled INTO.
+            When given, lambda_c is driven by HEADROOM -- best teacher minus
+            student -- instead of raw competence, and classes where the teacher
+            is no better than the student get lambda_c = 0.
+
+            This exists because competence alone is the wrong signal, measured:
+            on neu6s the best Inclusion teacher scores 0.678 while the federated
+            student already reaches 0.692, yet raw competence hands Inclusion
+            lambda_c = 0.164, the fourth-largest share of the budget. There is
+            nothing to teach there and the term can only drag the student down.
+            "How well is this class known" and "how much can distillation add"
+            are different questions; only the second should size the KD budget.
+        min_headroom: with `student`, the margin a teacher must beat the student
+            by before its class earns any weight.
     """
     class_names = competence["class_names"]
     cells = competence["cells"]
@@ -145,14 +161,30 @@ def derive_weights(
     mu = {t: {c: float(cells[t][c]["mean"]) for c in class_names} for t in teachers}
     sigma = {t: {c: float(cells[t][c]["std"]) for c in class_names} for t in teachers}
 
-    # lambda_c: driven by the best available teacher for each class.
+    # lambda_c: driven by the best available teacher for each class, or by that
+    # teacher's headroom over the student when the student's scores are supplied.
     best = [max(mu[t][c] for t in teachers) for c in class_names]
-    gated = [0.0 if b < min_competence else b for b in best]
+    if student is None:
+        gated = [0.0 if b < min_competence else b for b in best]
+        basis = "competence"
+    else:
+        missing = [c for c in class_names if c not in student]
+        if missing:
+            raise ValueError(
+                f"student scores missing for {missing}; pass one AP50 per class "
+                f"in {class_names}."
+            )
+        gated = [max(0.0, b - float(student[c])) if b >= min_competence else 0.0
+                 for b, c in zip(best, class_names)]
+        gated = [g if g > min_headroom else 0.0 for g in gated]
+        basis = "headroom over the student"
     total = sum(gated)
     if total <= 0:
         raise ValueError(
-            f"No class has a teacher above min_competence={min_competence}; "
-            f"best per class was {dict(zip(class_names, best))}."
+            f"No class earns weight on {basis} (min_competence={min_competence}"
+            + (f", min_headroom={min_headroom}" if student is not None else "")
+            + f"); best teacher per class was {dict(zip(class_names, best))}."
+            + ("" if student is None else f" student was {student}.")
         )
     lambda_c = [g / total for g in gated]
 

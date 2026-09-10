@@ -369,6 +369,42 @@ def test_select_teachers_requires_a_nonempty_keep():
     raise AssertionError("empty keep should raise")
 
 
+def test_headroom_lambda_zeroes_classes_the_student_already_beats():
+    """lambda_c on headroom, not raw competence.
+
+    Measured on neu6s: the best Inclusion teacher reaches 0.678 while the
+    federated student is already at 0.692, yet competence-based lambda_c hands
+    Inclusion 0.164 of the budget -- pointing distillation at a class where the
+    term can only drag the student down. Headroom zeroes it and moves the weight
+    to the class that has something to teach.
+    """
+    comp = {
+        "class_names": ["A", "B"],
+        "seeds": [0, 1],
+        "cells": {
+            "local_c1": {"A": {"mean": 0.90, "std": 0.01}, "B": {"mean": 0.60, "std": 0.01}},
+            "local_c2": {"A": {"mean": 0.20, "std": 0.01}, "B": {"mean": 0.30, "std": 0.01}},
+        },
+    }
+    raw = derive_weights(comp, tau=3.0)
+    assert raw.lambda_c[1] > 0, "competence basis should still weight B"
+
+    # student already beats the best B teacher (0.60) but trails on A (0.90).
+    head = derive_weights(comp, tau=3.0, student={"A": 0.40, "B": 0.75})
+    assert head.lambda_c[1] == 0.0, "B has no headroom and must get zero weight"
+    assert abs(head.lambda_c[0] - 1.0) < 1e-9, "weight moves to the class with headroom"
+    # routing is untouched -- lambda_c and w answer different questions.
+    assert raw.w == head.w
+
+    for bad, msg in [({"A": 0.99, "B": 0.99}, "headroom"), ({"A": 0.40}, "missing")]:
+        try:
+            derive_weights(comp, tau=3.0, student=bad)
+        except ValueError as e:
+            assert msg in str(e), f"expected {msg!r} in: {e}"
+        else:
+            raise AssertionError(f"expected a refusal for {bad}")
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

@@ -50,9 +50,15 @@ EPOCHS=${2:-75}
 SEED=${3:-0}
 LAM=${4:-10.0}
 TCONF=${5:-0.25}
+# The transfer set. Distillation moves only what the teacher demonstrates on the
+# images it is shown, so this is a first-class variable, not a path detail:
+# data/neu6s_survivors holds none of the departed class, the _buf variants keep
+# back a labelled memory buffer of 10 or 25 of its images.
+DATA_DIR=${6:-data/neu6s_survivors}
 
 STUDENT=experiments/pre_disruption_neu6s_seed0/fl/final_model/client_0_final.pt
-DATA=data/neu6s_survivors/data.yaml
+DATA=${DATA_DIR}/data.yaml
+TAG=$(basename "${DATA_DIR}" | sed 's/^neu6s_//')
 BANK=experiments/teacher_bank_neu6s_seed0/teacher_bank
 KDW=experiments/competence_across_seeds_neu6s/kd_weights.json
 # Must equal the bank's training imgsz: teachers are re-run on the student's
@@ -60,7 +66,7 @@ KDW=experiments/competence_across_seeds_neu6s/kd_weights.json
 IMGSZ=640
 # Settings are in the path so runs at different lam/teacher_conf/seed cannot
 # silently overwrite each other -- the first ablation wrote to a bare arm name.
-OUT=experiments/kd_neu6s/${ARM}_lam${LAM}_tc${TCONF}_seed${SEED}
+OUT=experiments/kd_neu6s/${ARM}_${TAG}_lam${LAM}_tc${TCONF}_seed${SEED}
 
 case "$ARM" in
   # lam=0 makes KD inert; teacher_conf is then irrelevant but stays passed so
@@ -77,7 +83,7 @@ module load miniforge
 source "${FL_VENV:-${SLURM_SUBMIT_DIR:-$(pwd)}/.venv}/bin/activate"
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
-echo "[run_distill] arm=${ARM} epochs=${EPOCHS} seed=${SEED} lam=${LAM} teacher_conf=${TCONF} -> ${OUT}"
+echo "[run_distill] arm=${ARM} data=${DATA_DIR} epochs=${EPOCHS} seed=${SEED} lam=${LAM} teacher_conf=${TCONF} -> ${OUT}"
 
 python -m adaptation.distill_finetune \
     --weights "${STUDENT}" \

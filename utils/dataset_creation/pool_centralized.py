@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import random
 import shutil
 from pathlib import Path
 
@@ -25,7 +26,7 @@ import yaml
 
 
 def pool(partition: Path, out: Path, num_clients: int = 6,
-         exclude: tuple[int, ...] = ()) -> None:
+         exclude: tuple[int, ...] = (), buffer: int = 0, seed: int = 0) -> None:
     """Pool clients into one dataset; `exclude` drops client indices entirely.
 
     Excluding is how the post-departure condition is built: the departed client's
@@ -38,6 +39,8 @@ def pool(partition: Path, out: Path, num_clients: int = 6,
     keep = [c for c in range(num_clients) if c not in exclude]
     if not keep:
         raise SystemExit("every client excluded; nothing to pool")
+    if buffer and not exclude:
+        raise SystemExit("--buffer only means anything alongside --exclude")
 
     for split in ("train", "val", "test"):
         (out / "images" / split).mkdir(parents=True, exist_ok=True)
@@ -60,6 +63,30 @@ def pool(partition: Path, out: Path, num_clients: int = 6,
             lbl = cdir / "labels" / "train" / f"{img.stem}.txt"
             if not lbl.exists():
                 raise SystemExit(f"no label for {img.name} in client_{c}")
+            shutil.copy2(lbl, out / "labels" / "train" / lbl.name)
+
+    # A retained memory buffer: `buffer` images kept back from an EXCLUDED client,
+    # with their labels. This is the transfer-set variable. Distillation can only
+    # move knowledge the teacher demonstrates on images it is shown, so a pool
+    # holding none of the departed class may be why KD failed to retain it --
+    # sweeping this size separates "distillation cannot do this" from "this
+    # transfer set cannot". Sampled deterministically so buffer sizes nest:
+    # the 10-image buffer is a subset of the 25-image one.
+    for c in exclude:
+        if not buffer:
+            break
+        cdir = partition / f"client_{c}"
+        pool_imgs = sorted((cdir / "images" / "train").glob("*.jpg"))
+        rng = random.Random(seed)
+        order = list(pool_imgs); rng.shuffle(order)
+        for img in order[:buffer]:
+            if img.name in seen:
+                raise SystemExit(f"buffer image {img.name} already pooled")
+            seen[img.name] = f"client_{c}(buffer)"
+            shutil.copy2(img, out / "images" / "train" / img.name)
+            lbl = cdir / "labels" / "train" / f"{img.stem}.txt"
+            if not lbl.exists():
+                raise SystemExit(f"no label for buffered {img.name}")
             shutil.copy2(lbl, out / "labels" / "train" / lbl.name)
 
     # val/test: the shared centralized holdout, copied through unchanged.
@@ -86,7 +113,7 @@ def pool(partition: Path, out: Path, num_clients: int = 6,
     client_total = sum(
         len(list((partition / f"client_{c}" / "images" / "train").glob("*.jpg")))
         for c in keep
-    )
+    ) + buffer * len(exclude)
     if counts["train"] != client_total:
         raise SystemExit(f"pooled train {counts['train']} != sum of clients {client_total}")
     for split in ("train", "val", "test"):
@@ -109,11 +136,14 @@ def main() -> None:
     ap.add_argument("--partition", required=True, help="e.g. data/neu6s_data")
     ap.add_argument("--out", required=True, help="e.g. data/neu6s_centralized")
     ap.add_argument("--num_clients", type=int, default=6)
+    ap.add_argument("--buffer", type=int, default=0,
+                    help="Images kept back from each excluded client, with labels.")
+    ap.add_argument("--seed", type=int, default=0, help="Buffer sampling seed.")
     ap.add_argument("--exclude", type=int, nargs="*", default=[],
                     help="Client indices to drop from the pool, e.g. --exclude 4 "
                          "to build the condition after client_4 departs.")
     a = ap.parse_args()
-    pool(Path(a.partition), Path(a.out), a.num_clients, tuple(a.exclude))
+    pool(Path(a.partition), Path(a.out), a.num_clients, tuple(a.exclude), a.buffer, a.seed)
 
 
 if __name__ == "__main__":
