@@ -43,7 +43,7 @@
 # to "competence}".
 ARM=${1:-}
 if [ -z "$ARM" ]; then
-    echo "usage: sbatch run_distill.sh nokd|uniform|competence [epochs] [seed]"
+    echo "usage: sbatch run_distill.sh nokd|uniform|argmax|competence [epochs] [seed]"
     exit 2
 fi
 EPOCHS=${2:-75}
@@ -61,6 +61,12 @@ DATA=${DATA_DIR}/data.yaml
 TAG=$(basename "${DATA_DIR}" | sed 's/^neu6s_//')
 BANK=experiments/teacher_bank_neu6s_seed0/teacher_bank
 KDW=experiments/competence_across_seeds_neu6s/kd_weights.json
+# tau -> 0 endpoint of the same estimator: each class routed to its single best
+# teacher. On the departed class this is IDENTICAL to competence routing (C5 at
+# w=1.0, same lambda_c); the two differ only on the five shared classes. So it is
+# the baseline that isolates what variance scaling adds -- uniform cannot, since
+# averaging one expert with five non-experts dilutes the class by construction.
+KDW_ARGMAX=experiments/competence_across_seeds_neu6s/kd_weights_argmax.json
 # Must equal the bank's training imgsz: teachers are re-run on the student's
 # batches, so a mismatch evaluates every teacher off its own resolution.
 IMGSZ=640
@@ -73,8 +79,9 @@ case "$ARM" in
   # every arm walks an identical code path.
   nokd)       EXTRA="--lam 0.0" ;;
   uniform)    EXTRA="--lam ${LAM}" ;;
+  argmax)     EXTRA="--lam ${LAM} --kd_weights ${KDW_ARGMAX}" ;;
   competence) EXTRA="--lam ${LAM} --kd_weights ${KDW}" ;;
-  *) echo "unknown arm '${ARM}' (expected nokd|uniform|competence)"; exit 2 ;;
+  *) echo "unknown arm '${ARM}' (expected nokd|uniform|argmax|competence)"; exit 2 ;;
 esac
 
 set -euo pipefail

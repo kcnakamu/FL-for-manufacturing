@@ -1,7 +1,7 @@
 from pathlib import Path
 import flwr as fl
 from model import (LOCAL_TRAIN_HP, MODEL_PATH, load_model, get_parameters,
-                   parameters_from_state, set_parameters, set_seed)
+                   parameters_from_state, set_parameters, set_seed, freeze_indices)
 from data import get_dataset_yaml
 import torch
 import numpy as np
@@ -12,7 +12,10 @@ import copy
 
 
 class YOLOClient(fl.client.NumPyClient):
-    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 6, strategy: str = "fedavg", seed: int = 0, imgsz: int = 640, warmup_epochs: float = 3.0):
+    def __init__(self, cid: str, data_dir: str, out_dir: str, epochs: int = 5, num_classes: int = 6, strategy: str = "fedavg", seed: int = 0, imgsz: int = 640, warmup_epochs: float = 3.0,
+                 lr0: float | None = None, freeze_mode: str = "full", kd_mode: str = "none",
+                 kd_bank: str | None = None, kd_weights: str | None = None, kd_lam: float = 10.0,
+                 kd_tconf: float = 0.25, kd_temperature: float = 2.0):
         """Initializes a YOLO Model for client {cid}.
 
         Args:
@@ -50,6 +53,15 @@ class YOLOClient(fl.client.NumPyClient):
         self._final_state = None
         self.model.add_callback("on_train_end", self._capture_final_weights_hook)
 
+        # Post-departure arm (a), federated. None of these change a default run:
+        # lr0=None keeps LOCAL_TRAIN_HP's rate, freeze_mode="full" passes no freeze,
+        # kd_mode="none" trains exactly as before.
+        self.lr0 = lr0
+        self.freeze_mode = freeze_mode
+        self.kd_mode = kd_mode
+        self._kd_trainer = self._build_kd_trainer(kd_mode, kd_bank, kd_weights,
+                                                  kd_lam, kd_tconf, kd_temperature)
+
         self.base_dir = Path(out_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         print(f"[Client {self.cid}] Output dir: {self.base_dir}")
@@ -86,6 +98,49 @@ class YOLOClient(fl.client.NumPyClient):
 
         net.loss = loss
         print(f"[Client {self.cid}] FedProx active (mu={mu})")
+
+    def _build_kd_trainer(self, mode, bank, weights_json, lam, tconf, temperature):
+        """Trainer class that adds the distillation term to THIS client's local loss.
+
+        The federated counterpart of adaptation/distill_finetune.py. That script
+        pooled the surviving clients' data into one centralized fine-tune, which a
+        real federation cannot do. Here the survivors keep running FedAvg and each
+        distils from the frozen pre-departure teacher bank on its own data only.
+        Built once and reused every round; the teachers reload inside each round's
+        trainer, after its EMA is copied, so they are never serialised.
+
+        "nokd" returns None. With lam=0 the KD term is multiplied by zero, so plain
+        training is mathematically the same run without six teacher forwards per
+        batch.
+        """
+        if mode in ("none", "nokd"):
+            return None
+        import yaml as _yaml
+        from adaptation.kd import make_kd_trainer
+        from adaptation.competence_weights import load_kd_weights
+        bank_dir = Path(bank)
+        pts = sorted(bank_dir.glob("local_c*.pt"), key=lambda q: int(q.stem.split("_c")[1]))
+        if not pts:
+            raise FileNotFoundError(f"no local_c*.pt teachers in {bank_dir}")
+        manifest = bank_dir / "manifest.json"
+        if manifest.exists():
+            bank_imgsz = json.loads(manifest.read_text()).get("imgsz")
+            if bank_imgsz is not None and int(bank_imgsz) != int(self.imgsz):
+                raise ValueError(
+                    f"teacher bank trained at imgsz={bank_imgsz} but this client trains at "
+                    f"{self.imgsz}; teachers re-run on the client's batches would be scored "
+                    f"off their own training resolution.")
+        names = [str(n) for n in _yaml.safe_load((Path(self.data_dir) / "data.yaml").read_text())["names"]]
+        if mode == "uniform":
+            lam_c, tw = [1.0 / len(names)] * len(names), None
+        else:
+            if not weights_json:
+                raise ValueError(f"--kd_mode {mode} needs --kd_weights")
+            lam_c, tw = load_kd_weights(weights_json, names, [p.stem for p in pts])
+        print(f"[Client {self.cid}] KD {mode}: {len(pts)} teachers, lam={lam}, "
+              f"teacher_conf={tconf}, lambda_c={[round(x, 3) for x in lam_c]}")
+        return make_kd_trainer([str(p) for p in pts], lam_c, lam=lam, temperature=temperature,
+                               teacher_conf=tconf, teacher_weights=tw)
 
     def _capture_final_weights_hook(self, trainer):
         """Snapshot the trainer's end-of-training weights before .train() returns.
@@ -231,6 +286,13 @@ class YOLOClient(fl.client.NumPyClient):
             # optimizer and a 10x smaller LR than the teachers were trained with.
             hp = dict(LOCAL_TRAIN_HP)
             hp["warmup_epochs"] = self.warmup_epochs if self.round == 1 else 0.0
+            if self.lr0 is not None:
+                hp["lr0"] = self.lr0
+            extra = {}
+            if self.freeze_mode != "full":
+                extra["freeze"] = freeze_indices(self.freeze_mode)
+            if self._kd_trainer is not None:
+                extra["trainer"] = self._kd_trainer
             self.model.train(
                 data=get_dataset_yaml(self.data_dir),
                 epochs=self.epochs,
@@ -244,6 +306,7 @@ class YOLOClient(fl.client.NumPyClient):
                 name=f"client_{self.cid}",
                 seed=self.seed,
                 **hp,
+                **extra,
             )
 
             # Federate the trainer's end-of-round fp32 weights, NOT
@@ -418,6 +481,18 @@ def main():
         help="Random seed for YOLO training (augmentation, dataloader order). "
              "Use the same seed as the server for a reproducible run.",
     )
+    parser.add_argument("--lr0", type=float, default=None,
+                        help="Override LOCAL_TRAIN_HP's lr0 (post-departure fine-tuning runs at 1e-4).")
+    parser.add_argument("--freeze_mode", choices=["full", "neck_head", "head_only"], default="full",
+                        help="Layers left trainable. neck_head freezes the backbone, as the "
+                             "centralized distill_finetune runs did.")
+    parser.add_argument("--kd_mode", choices=["none", "nokd", "uniform", "argmax", "competence"],
+                        default="none", help="Distillation from a frozen teacher bank on this client's data.")
+    parser.add_argument("--kd_bank", default=None, help="Directory holding local_c*.pt teachers.")
+    parser.add_argument("--kd_weights", default=None, help="kd_weights JSON (argmax / competence).")
+    parser.add_argument("--kd_lam", type=float, default=10.0)
+    parser.add_argument("--kd_tconf", type=float, default=0.25)
+    parser.add_argument("--kd_temperature", type=float, default=2.0)
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -429,7 +504,10 @@ def main():
     client = YOLOClient(args.cid, data_dir, out_dir=args.out_dir, epochs=args.epochs,
                         num_classes=args.num_classes, strategy=args.strategy,
                         seed=args.seed, imgsz=args.imgsz,
-                        warmup_epochs=args.warmup_epochs)
+                        warmup_epochs=args.warmup_epochs,
+                        lr0=args.lr0, freeze_mode=args.freeze_mode, kd_mode=args.kd_mode,
+                        kd_bank=args.kd_bank, kd_weights=args.kd_weights, kd_lam=args.kd_lam,
+                        kd_tconf=args.kd_tconf, kd_temperature=args.kd_temperature)
     print(f"[Client {args.cid}] ready, connecting to server...", flush=True)
     
     fl.client.start_numpy_client(

@@ -1,6 +1,6 @@
 import flwr as fl
 import argparse
-from model import get_parameters, load_model, set_seed
+from model import _state_keys, get_parameters, load_model, set_parameters, set_seed
 from strategies import build_strategy, add_weight_delta_logging, STRATEGIES
 from shapley.logger import add_update_logging
 
@@ -51,6 +51,10 @@ def main():
     parser.add_argument("--disruption_round", type=int, default=None,
                         help="Optional t* to tag in the Shapley log manifest (the "
                              "round A/B go offline). Every round is logged regardless.")
+    parser.add_argument("--init_weights", type=str, default=None,
+                        help="Start the federation from this checkpoint instead of the "
+                             "COCO-initialised model -- e.g. the pre-departure global, so "
+                             "the surviving clients CONTINUE training after one leaves.")
     args = parser.parse_args()
 
     # Seed before building the model so the randomly initialized detection head
@@ -60,6 +64,17 @@ def main():
 
     print("Loading model")
     server_model = load_model(num_classes=args.num_classes)
+    if args.init_weights:
+        from ultralytics import YOLO
+        init = YOLO(args.init_weights)
+        # Positional parameter lists are only safe if both models enumerate the
+        # same tensors in the same order; compare the names rather than trust it.
+        if _state_keys(init) != _state_keys(server_model):
+            raise ValueError(f"{args.init_weights} does not enumerate the same tensors as "
+                             f"load_model(num_classes={args.num_classes}); refusing to start "
+                             f"the federation from a misaligned parameter list.")
+        set_parameters(server_model, get_parameters(init))   # also enforces shapes
+        print(f"Initial global <- {args.init_weights}")
     initial_params = fl.common.ndarrays_to_parameters(get_parameters(server_model))
 
     shared_kwargs = dict(
